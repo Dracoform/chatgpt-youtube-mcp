@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+__pycache__
+*.py[cod]
+.env
+dist
+docs
+generators
+tests
+upload
+*.zip
