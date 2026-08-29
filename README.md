@@ -11,7 +11,7 @@ The bridge uses the official YouTube Data API v3 when possible, the public chann
 GitHub Actions tests the project and publishes a public multi-architecture image for AMD64 and ARM64:
 
 ```text
-ghcr.io/dracofrom/chatgpt-youtube-mcp:latest
+ghcr.io/dracoform/chatgpt-youtube-mcp:latest
 ```
 
 Versioned releases use Git tags such as `v0.1.0` and publish the corresponding `0.1.0` and `0.1` image tags. After the first workflow run, the package visibility must be changed to **Public** once in the GitHub package settings; repository visibility and package visibility are separate settings.

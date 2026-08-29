@@ -13,7 +13,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/dracofrom/chatgpt-youtube-mcp
+  IMAGE_NAME: ghcr.io/dracoform/chatgpt-youtube-mcp
 
 jobs:
   test:

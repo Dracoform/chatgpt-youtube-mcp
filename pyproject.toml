@@ -11,9 +11,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Dracofrom/chatgpt-youtube-mcp"
-Repository = "https://github.com/Dracofrom/chatgpt-youtube-mcp"
-Issues = "https://github.com/Dracofrom/chatgpt-youtube-mcp/issues"
+Homepage = "https://github.com/Dracoform/chatgpt-youtube-mcp"
+Repository = "https://github.com/Dracoform/chatgpt-youtube-mcp"
+Issues = "https://github.com/Dracoform/chatgpt-youtube-mcp/issues"
 
 [project.scripts]
 youtube-current-data-mcp = "youtube_mcp.server:main"

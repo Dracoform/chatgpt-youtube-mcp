@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.source="https://github.com/Dracofrom/chatgpt-youtube-mcp" \
+LABEL org.opencontainers.image.source="https://github.com/Dracoform/chatgpt-youtube-mcp" \
       org.opencontainers.image.description="Read-only MCP server for current YouTube data" \
       org.opencontainers.image.licenses="Apache-2.0"
 
