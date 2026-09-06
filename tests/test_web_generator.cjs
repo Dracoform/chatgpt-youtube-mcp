@@ -19,9 +19,20 @@ const RUNTIME_KEY = 's' + 'k-' + 'proj-test1234567890123456789012345678';
 const NON_STANDARD_RUNTIME = 'custom-opaque-token';
 const SHORT_SECRET = 'abc';
 const TUNNEL_ID = 'tunnel_0123456789abcdef0123456789abcdef';
+const PS1_GENERATOR = path.join(REPO, 'generators',
+  'generate_docker-compose_for_ChatGPT_MCP.ps1');
 
 let passed = 0;
 const failures = [];
+
+// Redact all test secret values from diagnostics/failure output.
+const SECRET_VALUES = [YOUTUBE_KEY, RUNTIME_KEY, NON_STANDARD_RUNTIME];
+function _redact(text) {
+  for (const s of SECRET_VALUES) {
+    if (s) { text = text.split(s).join('***REDACTED***'); }
+  }
+  return text;
+}
 
 function test(name, fn) {
   try {
@@ -105,12 +116,15 @@ test('yaml single-quote escaping matches the shell generators', () => {
   assert.strictEqual(gen.yamlQuote('plain'), "'plain'");
 });
 
-test('generated YAML matches the Bash generator structurally', () => {
+test('three-way equivalence: Bash, PowerShell, and web generators', () => {
+  // One test, three real generators, one identical non-default semantic
+  // input set. All three must produce the same normalized YAML structure
+  // or this test fails.
   const input = {
     mcpTag: '0.9.9',
     tunnelTag: '0.9.8',
     youtubeApiKey: YOUTUBE_KEY,
-    enableYtdlp: false,   // bash answers below disable yt-dlp (no consent prompt)
+    enableYtdlp: true,          // yt-dlp enabled AND consent confirmed below
     languages: 'de,en,fr',
     maxChars: '120000',
     tunnelId: TUNNEL_ID,
@@ -119,26 +133,57 @@ test('generated YAML matches the Bash generator structurally', () => {
   };
   const js = gen.buildYaml(input);
 
-  // Generate the same stack with the Bash generator (answers in prompt order).
-  const bashAnswers = [
-    '0.9.9', '0.9.8', YOUTUBE_KEY, 'y', 'n', 'de,en,fr', '120000',
+  // Shared non-default answers (prompt order per generator):
+  // tags, youtube key, key confirm, ytdlp enable (yes), consent JA,
+  // languages, max chars, tunnel id, runtime key, key confirm, proxy,
+  // proxy confirm.
+  const ANSWERS = [
+    '0.9.9', '0.9.8', YOUTUBE_KEY, 'y', '', 'JA', 'de,en,fr', '120000',
     TUNNEL_ID, RUNTIME_KEY, 'y', 'http://proxy:3128', 'y',
-  ].join('\n') + '\n';
-  const out = path.join(fs.mkdtempSync(path.join(require('os').tmpdir(), 'webgen-')), 'stack.yml');
-  execFileSync('bash', [path.join(REPO, 'generators',
-    'generate_docker-compose_for_ChatGPT_MCP.sh'), '--output', out],
-    { input: bashAnswers, encoding: 'utf8' });
-  const bash = fs.readFileSync(out, 'utf8');
+  ];
+  const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'threeway-'));
 
-  // Semantic comparison on parsed YAML (PyYAML is the repo's canonical parser;
-  // both YAML documents are passed as files to avoid argv length limits).
-  const jsFile = out + '.web.yml';
-  fs.writeFileSync(jsFile, js);
+  // --- Bash (real generator) ---------------------------------------------
+  const bashOut = path.join(tmp, 'bash.yml');
+  execFileSync('bash', [path.join(REPO, 'generators',
+    'generate_docker-compose_for_ChatGPT_MCP.sh'), '--output', bashOut],
+    { input: ANSWERS.join('\n') + '\n', encoding: 'utf8', timeout: 15000 });
+
+  // --- PowerShell (real pwsh, non-interactive Read-Host override) --------
+  const pwshAnswers = ANSWERS.map(a => "'" + a.replace(/'/g, "''") + "'").join(', ');
+  const ps1Script = `
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$global:answerQueue = [System.Collections.Generic.Queue[string]]::new()
+foreach ($item in @(${pwshAnswers})) { $global:answerQueue.Enqueue($item) }
+function global:Read-Host {
+    param([string]$PromptMessage, [switch]$AsSecureString)
+    if ($AsSecureString) {
+        $secure = New-Object System.Security.SecureString
+        foreach ($ch in ($global:answerQueue.Dequeue()).ToCharArray()) {
+            $secure.AppendChar($ch)
+        }
+        return $secure
+    }
+    return $global:answerQueue.Dequeue()
+}
+& '${PS1_GENERATOR}' -OutputPath '${path.join(tmp, 'pwsh.yml')}'
+exit 0
+`;
+  const pwsh = spawnSync('pwsh',
+    ['-NoProfile', '-NonInteractive', '-Command', ps1Script],
+    { encoding: 'utf8', timeout: 15000 });
+  assert.strictEqual(pwsh.status, 0,
+    'pwsh generator failed:\n' +
+      _redact((pwsh.stdout || '') + '\n' + (pwsh.stderr || '')));
+
+  // --- compare Bash vs PowerShell vs web on parsed, normalized YAML ------
+  const webOut = path.join(tmp, 'web.yml');
+  fs.writeFileSync(webOut, js);
   const py = `
 import json, sys, yaml
-js = yaml.safe_load(open(sys.argv[1]))
-bash = yaml.safe_load(open(sys.argv[2]))
 def norm(doc):
+    doc = json.loads(json.dumps(doc))  # deep copy
     tun = doc["services"]["openai-tunnel"]
     tun["depends_on"] = json.dumps(tun.get("depends_on"), sort_keys=True)
     for svc in doc["services"].values():
@@ -152,17 +197,40 @@ def norm(doc):
         "tun_tmpfs": doc["services"]["openai-tunnel"].get("tmpfs"),
         "tun_cap_drop": doc["services"]["openai-tunnel"].get("cap_drop"),
         "tun_sec": doc["services"]["openai-tunnel"].get("security_opt"),
+        "tun_stop_grace": str(doc["services"]["openai-tunnel"].get("stop_grace_period")),
         "tun_restart": doc["services"]["openai-tunnel"].get("restart"),
         "mcp_restart": doc["services"]["youtube-mcp"].get("restart"),
+        "mcp_read_only": doc["services"]["youtube-mcp"].get("read_only"),
+        "mcp_tmpfs": doc["services"]["youtube-mcp"].get("tmpfs"),
+        "mcp_cap_drop": doc["services"]["youtube-mcp"].get("cap_drop"),
+        "mcp_sec": doc["services"]["youtube-mcp"].get("security_opt"),
+        "mcp_expose": doc["services"]["youtube-mcp"].get("expose"),
         "networks": doc.get("networks"),
         "tun_networks": doc["services"]["openai-tunnel"].get("networks"),
     }
-print(json.dumps({"equal": norm(js) == norm(bash)}))
+docs = [norm(yaml.safe_load(open(p))) for p in sys.argv[1:4]]
+names = ["bash", "pwsh", "web"]
+result = {"equal": docs[0] == docs[1] == docs[2]}
+if not result["equal"]:
+    diffs = {}
+    for key in docs[0]:
+        vals = [d[key] for d in docs]
+        if not (vals[0] == vals[1] == vals[2]):
+            diffs[key] = dict(zip(names, vals))
+    result["diffs"] = diffs
+print(json.dumps(result))
 `;
-  const result = spawnSync('python3', ['-c', py, jsFile, out], { encoding: 'utf8' });
+  const result = spawnSync('python3',
+    ['-c', py, bashOut, path.join(tmp, 'pwsh.yml'), webOut],
+    { encoding: 'utf8', timeout: 30000 });
   assert.strictEqual(result.status, 0, result.stderr);
-  assert.strictEqual(JSON.parse(result.stdout).equal, true,
-    'web and bash YAML differ semantically');
+  const parsed = JSON.parse(result.stdout);
+  if (!parsed.equal) {
+    // Redact secret values from the diagnostic diff before surfacing it.
+    const diffText = _redact(JSON.stringify(parsed.diffs, null, 2));
+    assert.fail('three-way YAML mismatch:\n' + diffText);
+  }
+  assert.strictEqual(parsed.equal, true);
 });
 
 test('generated YAML contains exact confirmed secret values', () => {
@@ -283,7 +351,7 @@ test('web sources contain no external URLs that would load at runtime', () => {
   }
 });
 
-test('branding icon is a valid unmodified PNG (skipped until the file is provided)', () => {
+test('branding icon is a valid unmodified 64x64 PNG', () => {
   const icon = path.join(REPO, 'docs', 'assets', 'youtube-mcp-icon.png');
   if (!fs.existsSync(icon)) {
     console.log('     SKIP: docs/assets/youtube-mcp-icon.png not yet provided');
