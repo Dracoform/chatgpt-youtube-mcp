@@ -16,6 +16,16 @@ ghcr.io/dracoform/chatgpt-youtube-mcp:latest
 
 Versioned releases use Git tags such as `v0.1.0` and publish the corresponding `0.1.0` and `0.1` image tags. After the first workflow run, the package visibility must be changed to **Public** once in the GitHub package settings; repository visibility and package visibility are separate settings.
 
+## OpenAI Secure MCP Tunnel wrapper
+
+The repository also prepares a thin wrapper image around the official OpenAI `tunnel-client` container (`ghcr.io/openai/tunnel-client`, Apache-2.0, pinned by digest) for the Secure MCP Tunnel path:
+
+```text
+ghcr.io/dracoform/openai-mcp-tunnel:0.1.0
+```
+
+Status: the wrapper implementation is prepared and tested without production credentials. The public image and complete ChatGPT-to-YouTube path are not yet claimed as validated. See [docs/OPENAI_SECURE_MCP_TUNNEL.md](docs/OPENAI_SECURE_MCP_TUNNEL.md) and [docs/OPENAI_MCP_TUNNEL_IMAGE_RESEARCH.md](docs/OPENAI_MCP_TUNNEL_IMAGE_RESEARCH.md).
+
 ## Quick start
 
 ```bash

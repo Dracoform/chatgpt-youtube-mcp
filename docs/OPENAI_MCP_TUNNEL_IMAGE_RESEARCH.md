@@ -1,8 +1,11 @@
 # Research: OpenAI Secure MCP Tunnel Container (`openai-mcp-tunnel` 0.1.0)
 
-Status: research/validation phase — no image published. Intended target
-`ghcr.io/dracoform/openai-mcp-tunnel:0.1.0` does not exist yet; nothing in this
-document should be read as evidence that it was built.
+Status: research + implementation prepared. The wrapper image
+(`docker/openai-mcp-tunnel/`) is implemented and tested **without production
+credentials**. The public image `ghcr.io/dracoform/openai-mcp-tunnel:0.1.0`
+is **planned, not published** — no anonymous pull succeeds yet, and the
+complete ChatGPT-to-YouTube path is not yet claimed as validated. See
+`docs/OPENAI_SECURE_MCP_TUNNEL.md` for the implementation status.
 
 Research date: 2026-09-05. All primary facts below were verified on that date
 against live sources: the official repository docs (`main` branch, which
@@ -116,6 +119,13 @@ the *end-to-end works* claim.
   therefore permitted, *provided* the conditions of §4(a)-(b) are met:
   include a copy of the license, and retain all copyright, patent, trademark,
   and attribution notices from the source form.
+- The wrapper image **distributes or references upstream image layers** — it
+  is a derived work in the Apache-2.0 sense. Apache-2.0 permits this subject
+  to its conditions; it would be inaccurate to describe the wrapper as
+  involving "no binary redistribution". The obligations are met by keeping
+  the upstream image's license/notice content intact (the wrapper does not
+  remove any LICENSE/NOTICE files from the base image) and by the wrapper's
+  OCI labels naming the base image and its license.
 - Practically, our wrapper approach makes this trivial: the upstream image
   already contains the binary and (as the release layout shows) upstream
   treats license/notice distribution as part of the artifact contract
@@ -815,7 +825,8 @@ to "wrap the official image":
   `ghcr.io/openai/tunnel-client@sha256:41d7c85d…` (v0.0.14): non-root,
   read-only, env-contract adapter, loopback healthcheck, OCI labels.
 - The public redistributable tunnel image is viable under Apache-2.0 with
-  trivially met obligations (wrapper design preserves upstream LICENSE).
+  obligations met because the wrapper keeps the upstream image's
+  LICENSE/NOTICE content intact and labels the base image).
 - Environment contract: generators keep `OPENAI_TUNNEL_ID`; entrypoint maps
   to the official `CONTROL_PLANE_TUNNEL_ID`. `CONTROL_PLANE_API_KEY` and
   `MCP_SERVER_URL` are already correct as-is.
