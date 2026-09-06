@@ -10,4 +10,3 @@ services:
       - /tmp:size=64m
     security_opt:
       - no-new-privileges:true
-

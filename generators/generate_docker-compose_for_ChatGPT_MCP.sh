@@ -294,7 +294,8 @@ fi
 
   printf '%s\n' \
     "    depends_on:" \
-    "      - youtube-mcp" \
+    "      youtube-mcp:" \
+    "        condition: service_healthy" \
     "    read_only: true" \
     "    tmpfs:" \
     "      - /tmp:size=16m" \

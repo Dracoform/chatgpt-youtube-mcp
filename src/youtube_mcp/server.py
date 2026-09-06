@@ -15,6 +15,22 @@ mcp = FastMCP(
     stateless_http=True,
     json_response=True,
 )
+
+
+@mcp.custom_route("/healthz", methods=["GET"])
+async def healthz(request: Any) -> Any:
+    """HTTP readiness endpoint on the MCP port itself.
+
+    Served by the same uvicorn listener that serves /mcp, so a 200 response
+    proves that port 8765 is accepting connections and the application is
+    up — not merely that a process exists. Docker HEALTHCHECK and the
+    generated Compose `service_healthy` dependency use this endpoint.
+    """
+    from starlette.responses import JSONResponse
+
+    return JSONResponse({"status": "ok", "service": "youtube-current-data-mcp"})
+
+
 service = YouTubeService()
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
 
@@ -28,13 +44,29 @@ def _call(method: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
 
 @mcp.tool(annotations=READ_ONLY)
 def get_video(video: str) -> dict[str, Any]:
-    """Get current metadata for one YouTube video. Input may be a video URL or video ID."""
+    """Get current metadata for one YouTube video. Input may be a video URL or video ID.
+
+    Caption semantics: `youtube_api_caption_flag` mirrors the official
+    YouTube Data API `caption` field, which only reports MANUAL caption
+    tracks. An official false value is reported as
+    `caption_available: null` (unknown) — it must NOT be interpreted as
+    proof that captions do not exist, because automatic (ASR) tracks can
+    still be present and are invisible to this flag. `list_caption_tracks`
+    is authoritative for manual AND automatic caption discovery; call it
+    before concluding that no captions exist. Call `get_video_transcript`
+    when transcript retrieval is requested.
+    """
     return _call("get_video", video)
 
 
 @mcp.tool(annotations=READ_ONLY)
 def list_caption_tracks(video: str) -> dict[str, Any]:
-    """List manual tracks, original automatic tracks, and a bounded set of translation languages for a YouTube video."""
+    """List manual tracks, original automatic tracks, and a bounded set of translation languages for a YouTube video.
+
+    This is the authoritative caption-discovery operation: unlike the
+    official API caption flag, it reports manual AND automatic (ASR)
+    tracks via yt-dlp.
+    """
     return _call("list_caption_tracks", video)
 
 
