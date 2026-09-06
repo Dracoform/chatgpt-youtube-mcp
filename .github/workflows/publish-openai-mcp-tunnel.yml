@@ -1,0 +1,194 @@
+name: Test and publish OpenAI MCP tunnel wrapper
+
+# Two modes:
+#  - push/PR: unit + static tests and a local (unpublished) build/metadata
+#    verification; never logs in to GHCR, never pushes an image.
+#  - workflow_dispatch with a valid version: the ONLY path that publishes
+#    the wrapper to GHCR with tags 0.1.0 / 0.1 / latest.
+
+on:
+  push:
+    paths:
+      - 'docker/openai-mcp-tunnel/**'
+      - '.github/workflows/publish-openai-mcp-tunnel.yml'
+    branches:
+      - '**'
+  pull_request:
+    paths:
+      - 'docker/openai-mcp-tunnel/**'
+      - '.github/workflows/publish-openai-mcp-tunnel.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Wrapper version tag, e.g. 0.1.0 (must match ^[0-9]+\.[0-9]+\.[0-9]+$)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/dracoform/openai-mcp-tunnel
+  UPSTREAM_REPO: openai/tunnel-client
+
+jobs:
+  test:
+    name: Unit and static tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bats
+
+      - name: Shell syntax checks
+        run: |
+          sh -n docker/openai-mcp-tunnel/entrypoint.sh
+          bash -n docker/openai-mcp-tunnel/entrypoint.sh
+
+      - name: Entrypoint unit tests (no credentials)
+        run: bats docker/openai-mcp-tunnel/tests/test_entrypoint.bats
+
+      - name: Validate versions.env (fail closed on any missing/malformed pin)
+        run: |
+          set -euo pipefail
+          cd docker/openai-mcp-tunnel
+          # shellcheck disable=SC1091
+          source versions.env
+          check() { # check VARNAME REGEX
+            local value="${!1:-}"
+            if [[ ! "$value" =~ $2 ]]; then
+              echo "FATAL: $1 missing or malformed in versions.env" >&2
+              exit 1
+            fi
+          }
+          check TUNNEL_CLIENT_VERSION '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          check TUNNEL_CLIENT_IMAGE_DIGEST '^sha256:[0-9a-f]{64}$'
+          check TUNNEL_CLIENT_AMD64_DIGEST '^sha256:[0-9a-f]{64}$'
+          check TUNNEL_CLIENT_ARM64_DIGEST '^sha256:[0-9a-f]{64}$'
+          check TUNNEL_CLIENT_RUNTIME_LINUX_AMD64_SHA256 '^[0-9a-f]{64}$'
+          check TUNNEL_CLIENT_RUNTIME_LINUX_ARM64_SHA256 '^[0-9a-f]{64}$'
+          echo "versions.env pins complete for ${TUNNEL_CLIENT_VERSION}"
+
+      - name: Verify pinned digest is the registry digest of the pinned tag
+        run: |
+          set -euo pipefail
+          cd docker/openai-mcp-tunnel
+          # shellcheck disable=SC1091
+          source versions.env
+          TOKEN=$(curl -fsS "https://ghcr.io/token?scope=repository:${UPSTREAM_REPO}:pull&service=ghcr.io" | jq -r .token)
+          [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || { echo "FATAL: token request failed" >&2; exit 1; }
+          LIVE=$(curl -fsS -D - -o /dev/null \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/${UPSTREAM_REPO}/manifests/${TUNNEL_CLIENT_VERSION}" \
+            | tr -d '\r' | awk 'tolower($1)=="docker-content-digest:" {print $2}' | tail -1)
+          if [ -z "$LIVE" ]; then
+            echo "FATAL: Docker-Content-Digest header absent from registry response" >&2
+            exit 1
+          fi
+          if [ "$LIVE" != "$TUNNEL_CLIENT_IMAGE_DIGEST" ]; then
+            echo "FATAL: pinned digest moved upstream (pin=${TUNNEL_CLIENT_IMAGE_DIGEST}, live=${LIVE})" >&2
+            exit 1
+          fi
+          echo "Registry digest matches pin: ${LIVE}"
+
+      - name: Dockerfile metadata and architecture resolution (no publish)
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build wrapper for both platforms (local load, never pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/openai-mcp-tunnel
+          platforms: linux/amd64,linux/arm64
+          push: false
+          load: false
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish:
+    name: Publish wrapper image (manual only)
+    needs: test
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate version input before any login or publication
+        id: validate-version
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.version }}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "FATAL: version '${VERSION}' does not match ^[0-9]+\\.[0-9]+\\.[0-9]+$" >&2
+            exit 1
+          fi
+          MAJOR="${VERSION%%.*}"
+          MINOR="${VERSION#*.}"; MINOR="${MINOR%%.*}"
+          {
+            echo "version=${VERSION}"
+            echo "minor_alias=${MAJOR}.${MINOR}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Read and verify upstream pins (fail closed)
+        id: pins
+        run: |
+          set -euo pipefail
+          cd docker/openai-mcp-tunnel
+          # shellcheck disable=SC1091
+          source versions.env
+          TOKEN=$(curl -fsS "https://ghcr.io/token?scope=repository:${UPSTREAM_REPO}:pull&service=ghcr.io" | jq -r .token)
+          LIVE=$(curl -fsS -D - -o /dev/null \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/${UPSTREAM_REPO}/manifests/${TUNNEL_CLIENT_VERSION}" \
+            | tr -d '\r' | awk 'tolower($1)=="docker-content-digest:" {print $2}' | tail -1)
+          [ -n "$LIVE" ] || { echo "FATAL: no Docker-Content-Digest header" >&2; exit 1; }
+          [ "$LIVE" = "$TUNNEL_CLIENT_IMAGE_DIGEST" ] || {
+            echo "FATAL: pinned digest moved upstream (pin=${TUNNEL_CLIENT_IMAGE_DIGEST}, live=${LIVE})" >&2; exit 1; }
+          echo "digest=$LIVE" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish multi-architecture wrapper
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/openai-mcp-tunnel
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ${{ env.IMAGE }}:${{ inputs.version }}
+            ${{ env.IMAGE }}:${{ steps['validate-version'].outputs.minor_alias }}
+            ${{ env.IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/${{ env.UPSTREAM_REPO }}@${{ needs.test.outputs.digest }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Inspect published manifest (fail closed on missing platform)
+        run: |
+          set -euo pipefail
+          INSPECT=$(docker buildx imagetools inspect "${{ env.IMAGE }}:${{ inputs.version }}")
+          echo "$INSPECT"
+          echo "$INSPECT" | grep -q 'linux/amd64' || { echo "FATAL: linux/amd64 missing" >&2; exit 1; }
+          echo "$INSPECT" | grep -q 'linux/arm64' || { echo "FATAL: linux/arm64 missing" >&2; exit 1; }
