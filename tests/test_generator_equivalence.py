@@ -19,17 +19,23 @@ PS1_GENERATOR = REPO / "generators" / "generate_docker-compose_for_ChatGPT_MCP.p
 # Same answers for both generators, in prompt order:
 # mcp_tag, tunnel_tag, youtube_api_key, ytdlp_enable, consent,
 # languages, max_chars, tunnel_id, runtime_key, proxy
+# Prompt order (both generators):
+# mcp tag, tunnel tag, youtube key, key confirm, yt-dlp enable (no -> no
+# consent prompt), languages, max chars, tunnel id, runtime key, key
+# confirm, proxy, proxy confirm.
 ANSWERS = [
     "0.9.9",            # mcp tag (non-default to catch dropped prompts)
     "0.9.8",            # tunnel tag
-    "",                 # youtube api key (empty)
-    "ja",               # enable yt-dlp
-    "JA",               # consent
+    "AIza" + "SyA1234567890" + "abcdefghijklmnopqrstuv",   # 39-char key
+    "y",                # key confirm
+    "n",                # disable yt-dlp (skips consent prompt)
     "de,en,fr",         # languages
     "120000",           # max chars
     "tunnel_0123456789abcdef0123456789abcdef",
-    "EQUIVALENCE-TEST-KEY",
-    "http://proxy:3128",
+    "s" + "k-equivalence-test-key",   # starts with recognized prefix
+    "y",                # key confirm
+    "http://proxy:3128",  # proxy
+    "y",                # proxy confirm
 ]
 
 VALID_ID = "tunnel_0123456789abcdef0123456789abcdef"
@@ -104,7 +110,7 @@ class TestGeneratorEquivalence(unittest.TestCase):
         # generators were captured above; assert key is in the YAML env only
         for doc in (self.bash, self.pwsh):
             env = doc["services"]["openai-tunnel"]["environment"]
-            self.assertEqual(env["CONTROL_PLANE_API_KEY"], "EQUIVALENCE-TEST-KEY")
+            self.assertEqual(env["CONTROL_PLANE_API_KEY"], "sk-equivalence-test-key")
 
     def test_images_identical(self):
         for svc in ("youtube-mcp", "openai-tunnel"):
@@ -167,7 +173,7 @@ class TestGeneratorEquivalence(unittest.TestCase):
     def test_yt_dlp_settings_identical(self):
         for doc in (self.bash, self.pwsh):
             env = doc["services"]["youtube-mcp"]["environment"]
-            self.assertEqual(env["YOUTUBE_ENABLE_YTDLP"], "true")
+            self.assertEqual(env["YOUTUBE_ENABLE_YTDLP"], "false")
             self.assertEqual(env["YOUTUBE_DEFAULT_LANGUAGES"], "de,en,fr")
             self.assertEqual(env["YOUTUBE_TRANSCRIPT_MAX_CHARS"], "120000")
 

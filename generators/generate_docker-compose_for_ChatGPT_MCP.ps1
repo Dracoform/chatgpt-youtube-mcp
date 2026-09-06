@@ -28,21 +28,70 @@ function Read-Value {
 }
 
 function Read-SecretText {
-    param(
-        [Parameter(Mandatory)] [string]$Prompt,
-        [switch]$Required
-    )
+    # Read one hidden line, returning the plaintext. Empty input is allowed
+    # (callers decide); the value is never printed.
     while ($true) {
         $secure = Read-Host $Prompt -AsSecureString
         $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
         try {
-            $value = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+            return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
         }
         finally {
             [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
         }
-        if (-not $Required -or -not [string]::IsNullOrWhiteSpace($value)) { return $value }
-        Write-Warning "Eine Eingabe ist erforderlich."
+    }
+}
+
+function Get-SecretMask {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    $length = $Value.Length
+    if ($length -le 4) { return ("X" * $length) }
+    return ("X" * ($length - 4)) + $Value.Substring($length - 4)
+}
+
+function Test-SecretValid {
+    # Reject CR, LF, other control characters, and leading/trailing
+    # whitespace. Inner whitespace is allowed. No silent trimming.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    if ($Value -ne $Value.Trim()) { return $false }
+    foreach ($ch in $Value.ToCharArray()) {
+        if ([char]::IsControl($ch)) { return $false }
+    }
+    return $true
+}
+
+function Read-SecretConfirmed {
+    # Read a hidden secret, show a length-preserving mask (final four chars
+    # visible; fully masked when four characters or shorter), print the
+    # length separately, and require explicit confirmation. Rejected or
+    # invalid input repeats entry. The complete secret is never printed and
+    # never passed through command-line arguments.
+    param(
+        [Parameter(Mandatory)] [string]$Prompt,
+        [switch]$Required,
+        [Parameter(Mandatory)] [string]$Label
+    )
+    while ($true) {
+        $value = Read-SecretText -Prompt $Prompt
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            if (-not $Required) { return "" }
+            Write-Warning "Eine Eingabe ist erforderlich."
+            continue
+        }
+        if (-not (Test-SecretValid -Value $value)) {
+            Write-Warning "Die Eingabe enthaelt Steuerzeichen oder fuehrende/nachfolgende Leerzeichen. Bitte erneut eingeben."
+            continue
+        }
+        Write-Host ""
+        Write-Host "$Label empfangen:"
+        Write-Host (Get-SecretMask -Value $value)
+        Write-Host "Laenge: $($value.Length) Zeichen"
+        $confirm = Read-Host "Diesen Wert uebernehmen? [Y/n]"
+        if ([string]::IsNullOrWhiteSpace($confirm)) { $confirm = "y" }
+        switch ($confirm.ToLowerInvariant()) {
+            { $_ -in @("j", "ja", "y", "yes") } { return $value }
+            default { Write-Host "Eingabe wird wiederholt." }
+        }
     }
 }
 
@@ -87,7 +136,26 @@ $mcpImage = "${McpImageBase}:${mcpTag}"
 $tunnelTag = Read-Value -Prompt "[OPTIONAL] Version des Tunnel-Images (example: 0.1.0)" -Default $DefaultTunnelTag
 $tunnelImage = "${TunnelImageBase}:${tunnelTag}"
 
-$youtubeApiKey = Read-SecretText -Prompt "[OPTIONAL] YouTube Data API Key (example: AIza...; Enter = leer)"
+# Optionaler YouTube API Key: Bestaetigung mit maskierter Anzeige.
+# Ein Google-API-key hat aktuell die Form AIza + 35 Zeichen ([A-Za-z0-9_-]).
+# Abweichende Formate erzeugen eine Warnung; ein explizites Ueberschreiben
+# bleibt moeglich, damit kuenftige Formate nicht dauerhaft blockiert werden.
+while ($true) {
+    $youtubeApiKey = Read-SecretConfirmed -Prompt "[OPTIONAL] YouTube Data API Key (example: AIza...; Enter = leer)" -Label "YouTube API key"
+    if ([string]::IsNullOrWhiteSpace($youtubeApiKey)) {
+        Write-Host "No YouTube API key was entered."
+        $continueNoKey = Read-YesNo -Prompt "Continue without a YouTube API key?" -Default $false
+        if ($continueNoKey) { break }
+        continue
+    }
+    if ($youtubeApiKey -notmatch '^AIza[A-Za-z0-9_-]{35}$') {
+        Write-Warning "Der eingegebene Wert entspricht nicht dem erwarteten Format eines Google API keys (AIza + 35 Zeichen). Moegliche Ursache: doppelt eingefuegter Schluessel (pruefen Sie die angezeigte Laenge)."
+        $keepFormat = Read-YesNo -Prompt "Den Wert trotz der Warnung uebernehmen?" -Default $false
+        if ($keepFormat) { break }
+        continue
+    }
+    break
+}
 $enableYtDlp = Read-YesNo -Prompt "[OPTIONAL] Inoffiziellen Transcript-Abruf uber yt-dlp aktivieren?" -Default $true
 if ($enableYtDlp) {
     Write-Host "Hinweis: Der Transcript-Abruf nutzt inoffizielle YouTube-Endpunkte und"
@@ -113,8 +181,20 @@ $tunnelId = Read-Value -Prompt "[MANDATORY] OpenAI Tunnel-ID (example: tunnel_01
 if ($tunnelId -notmatch '^tunnel_[A-Za-z0-9_-]+$') {
     throw "Die Tunnel-ID muss mit tunnel_ beginnen."
 }
-$runtimeApiKey = Read-SecretText -Prompt "[MANDATORY] OpenAI Runtime API Key (example: sk-...; Eingabe verborgen)" -Required
-$httpProxy = Read-SecretText -Prompt "[OPTIONAL] Outbound-Proxy fur den Tunnel, HTTPS_PROXY (example: http://proxy:3128; Enter = keiner)"
+# Pflicht-Geheimnis: Runtime API Key (CONTROL_PLANE_API_KEY).
+# Kein starres Laengen-/Prefix-Format; nur der bekannte Praefix 'sk-'
+# verhindert die Warnung. Abweichende Werte erfordern explizite Bestaetigung.
+while ($true) {
+    $runtimeApiKey = Read-SecretConfirmed -Prompt "[MANDATORY] OpenAI Runtime API Key (example: sk-...; Eingabe verborgen)" -Required -Label "OpenAI Runtime API key"
+    if ($runtimeApiKey -notmatch '^sk-') {
+        Write-Warning "Der Wert beginnt nicht mit einem bekannten OpenAI-Key-Praefix (sk-)."
+        $keepPrefix = Read-YesNo -Prompt "Den Wert trotz der Warnung uebernehmen?" -Default $false
+        if ($keepPrefix) { break }
+        continue
+    }
+    break
+}
+$httpProxy = Read-SecretConfirmed -Prompt "[OPTIONAL] Outbound-Proxy fur den Tunnel, HTTPS_PROXY (example: http://proxy:3128; Enter = keiner)" -Label "HTTPS proxy value"
 
 if (Test-Path -LiteralPath $OutputPath) {
     if (-not (Read-YesNo -Prompt "[CONDITIONAL] Datei $OutputPath existiert. Uberschreiben?" -Default $false)) {

@@ -45,16 +45,75 @@ prompt_required() {
   printf -v "$__result_var" '%s' "$answer"
 }
 
-prompt_secret() {
-  local __result_var="$1" prompt_text="$2" required="${3:-false}" answer=""
+# Print a verifiable masked representation of a secret: every character
+# masked except the final four; values of four characters or fewer are
+# masked completely. Never prints the secret itself.
+mask_secret() {
+  local value="$1" length="${#1}" i shown="" masked=""
+  if ((length <= 4)); then
+    for ((i = 0; i < length; i++)); do masked+='X'; done
+    printf '%s' "$masked"
+  else
+    shown="${value: -4}"
+    for ((i = 0; i < length - 4; i++)); do masked+='X'; done
+    printf '%s%s' "$masked" "$shown"
+  fi
+}
+
+# A secret is invalid if it contains CR, LF, NUL, other control characters,
+# or leading/trailing whitespace. Whitespace inside the value is allowed.
+secret_has_control_chars_or_edge_whitespace() {
+  local value="$1"
+  [[ "$value" != "${value#"${value%%[!\ \	]*}"}" || "$value" != "${value%"${value##*[!\ \	]}"}" ]] && return 0
+  # reject C0/C1 control characters anywhere in the value
+  [[ "$value" =~ [[:cntrl:]] ]] && return 0
+  return 1
+}
+
+# Read a secret repeatedly until it passes validation and the user confirms
+# the displayed masked representation. The value is never echoed and never
+# passed through command-line arguments of any child process.
+prompt_secret_confirmed() {
+  local __result_var="$1" prompt_text="$2" required="${3:-false}" \
+        label="$4" format_warn="${5:-}" answer
   while true; do
-    read -r -s -p "$prompt_text: " answer || true
-    printf '\n' >&2
-    if [[ "$required" != "true" || -n "$answer" ]]; then
+    answer=""
+    while true; do
+      # IFS= preserves leading/trailing whitespace so rule "no silent
+      # trimming" is enforceable; without it `read` strips edge whitespace.
+      IFS= read -r -s -p "$prompt_text: " answer || true
+      printf '\n' >&2
+      if [[ -z "$answer" && "$required" != "true" ]]; then
+        break
+      fi
+      if [[ -z "$answer" ]]; then
+        printf 'Eine Eingabe ist erforderlich.\n' >&2
+        continue
+      fi
+      if secret_has_control_chars_or_edge_whitespace "$answer"; then
+        printf 'Warnung: Die Eingabe enthaelt Steuerzeichen oder fuehrende/nachfolgende Leerzeichen.\n' >&2
+        printf 'Bitte erneut eingeben.\n' >&2
+        continue
+      fi
       break
+    done
+    if [[ -z "$answer" ]]; then
+      # empty answer on an optional secret: caller decides what happens next
+      printf -v "$__result_var" '%s' ""
+      return 0
     fi
-    printf 'Eine Eingabe ist erforderlich.\n' >&2
+    printf '%s empfangen:\n%s\nLaenge: %d Zeichen\n' "$label" "$(mask_secret "$answer")" "${#answer}" >&2
+    local confirm
+    read -r -p "Diesen Wert uebernehmen? [Y/n]: " confirm || true
+    confirm="${confirm:-y}"
+    case "${confirm,,}" in
+      y|j|ja|yes) break ;;
+      *) printf 'Eingabe wird wiederholt.\n' >&2 ;;
+    esac
   done
+  if [[ -n "$format_warn" && ! "$answer" =~ $format_warn ]]; then
+    printf 'Warnung: %s\n' "$label" >&2
+  fi
   printf -v "$__result_var" '%s' "$answer"
 }
 
@@ -114,7 +173,30 @@ mcp_image="${MCP_IMAGE_BASE}:${mcp_tag}"
 prompt tunnel_tag "[OPTIONAL] Version des Tunnel-Images (example: 0.1.0)" "$DEFAULT_TUNNEL_TAG"
 tunnel_image="${TUNNEL_IMAGE_BASE}:${tunnel_tag}"
 
-prompt_secret youtube_api_key "[OPTIONAL] YouTube Data API Key (example: AIza...; Enter = leer)" false
+# Optionaler YouTube API Key: Bestaetigung mit maskierter Anzeige.
+# Ein Google-API-Key hat aktuell die Form AIza + 35 Zeichen ([A-Za-z0-9_-]).
+# Abweichende Formate erzeugen eine Warnung; ein explizites Ueberschreiben
+# bleibt moeglich, damit kuenftige Formate nicht dauerhaft blockiert werden.
+GOOGLE_KEY_PATTERN='^AIza[A-Za-z0-9_-]{35}$'
+while true; do
+  prompt_secret_confirmed youtube_api_key \
+    "[OPTIONAL] YouTube Data API Key (example: AIza...; Enter = leer)" false \
+    "YouTube API key"
+  if [[ -z "$youtube_api_key" ]]; then
+    printf '%s\n' "No YouTube API key was entered."
+    prompt_yes_no continue_no_key "Continue without a YouTube API key?" no
+    [[ "$continue_no_key" == "true" ]] && break
+    continue
+  fi
+  if [[ ! "$youtube_api_key" =~ $GOOGLE_KEY_PATTERN ]]; then
+    printf 'Warnung: Der eingegebene Wert entspricht nicht dem erwarteten Format eines Google API keys (AIza + 35 Zeichen).\n' >&2
+    printf 'Moegliche Ursache: doppelt eingefuegter Schluessel (pruefen Sie die angezeigte Laenge).\n' >&2
+    prompt_yes_no keep_format "Den Wert trotz der Warnung uebernehmen?" no
+    [[ "$keep_format" == "true" ]] && break
+    continue
+  fi
+  break
+done
 prompt_yes_no enable_ytdlp "[OPTIONAL] Inoffiziellen Transcript-Abruf ueber yt-dlp aktivieren?" yes
 if [[ "$enable_ytdlp" == "true" ]]; then
   printf '%s\n' \
@@ -133,8 +215,27 @@ prompt max_chars "[OPTIONAL] Maximale Transcript-Zeichen (example: 60000)" "$DEF
 
 prompt_required tunnel_id "[MANDATORY] OpenAI Tunnel-ID (example: tunnel_0123456789abcdef)"
 [[ "$tunnel_id" =~ ^tunnel_[A-Za-z0-9_-]+$ ]] || die "Die Tunnel-ID muss mit tunnel_ beginnen."
-prompt_secret runtime_api_key "[MANDATORY] OpenAI Runtime API Key (example: sk-...; Eingabe verborgen)" true
-prompt_secret http_proxy "[OPTIONAL] Outbound-Proxy fuer den Tunnel, HTTPS_PROXY (example: http://proxy:3128; Enter = keiner)" false
+
+# Pflicht-Geheimnis: Runtime API Key (CONTROL_PLANE_API_KEY).
+# Kein starres Laengen-/Prefix-Format (OpenAI-Key-Formate koennen sich aendern);
+# nur ein bekannter Praefix 'sk-' verhindert die Warnung. Abweichende Werte
+# erfordern eine explizite Bestaetigung statt stiller Akzeptanz.
+while true; do
+  prompt_secret_confirmed runtime_api_key \
+    "[MANDATORY] OpenAI Runtime API Key (example: sk-...; Eingabe verborgen)" true \
+    "OpenAI Runtime API key"
+  if [[ ! "$runtime_api_key" =~ ^sk- ]]; then
+    printf 'Warnung: Der Wert beginnt nicht mit einem bekannten OpenAI-Key-Praefix (sk-).\n' >&2
+    prompt_yes_no keep_prefix "Den Wert trotz der Warnung uebernehmen?" no
+    [[ "$keep_prefix" == "true" ]] && break
+    continue
+  fi
+  break
+done
+
+prompt_secret_confirmed http_proxy \
+  "[OPTIONAL] Outbound-Proxy fuer den Tunnel, HTTPS_PROXY (example: http://proxy:3128; Enter = keiner)" false \
+  "HTTPS proxy value"
 
 if [[ -e "$output_path" ]]; then
   prompt_yes_no overwrite "[CONDITIONAL] Datei $output_path existiert. Ueberschreiben?" no
