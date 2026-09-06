@@ -261,11 +261,11 @@ jobs:
             echo "FATAL: pinned digest moved upstream (pin=${TUNNEL_CLIENT_IMAGE_DIGEST}, live=${LIVE})" >&2; exit 1; }
           echo "digest=$LIVE" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
