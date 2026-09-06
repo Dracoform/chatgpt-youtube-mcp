@@ -95,6 +95,28 @@ def bash_answers(youtube_key=YOUTUBE_KEY, runtime_key=RUNTIME_KEY,
     return a
 
 
+class TestTestEnvironment(unittest.TestCase):
+    """Regression guard for the CI test-dependency setup.
+
+    tests/test_generators.py and tests/test_core.py import yaml at module
+    level. PyYAML is deliberately NOT a runtime dependency; it comes from
+    the project's `test` extra (pyproject.toml), which both CI test jobs
+    install via `pip install .[test]`. If this import fails in CI, the
+    fix is the workflow install step or the `test` extra — not an ad-hoc
+    pip call in a test.
+    """
+
+    def test_yaml_dependency_available(self):
+        try:
+            import yaml  # noqa: F401
+        except ModuleNotFoundError as exc:
+            self.fail(
+                "PyYAML is not installed but the generator tests require it. "
+                "Install the project test extra: `pip install .[test]` "
+                f"(original error: {exc})"
+            )
+
+
 class TestBashGenerator(unittest.TestCase):
     """Executable tests against the Bash generator (bash is available)."""
 

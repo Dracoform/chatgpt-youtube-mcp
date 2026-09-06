@@ -61,9 +61,8 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
-        run: |
-          python3 -m pip install --quiet PyYAML
-          python3 -m pip install --quiet .
+        # PyYAML comes from the project's `test` extra (pyproject.toml).
+        run: python3 -m pip install --quiet .[test]
 
       - name: Run Python unittest suite (generators, wrapper files, equivalence)
         run: python3 -m unittest discover -s tests -v
