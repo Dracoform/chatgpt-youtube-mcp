@@ -26,12 +26,35 @@ RUNTIME_KEY = "s" + "k-" + "proj-test1234567890123456789012345678"
 assert RUNTIME_KEY.startswith("sk-")
 
 
+def _redact(text, *secrets):
+    """Remove test secret values from captured output before diagnostics."""
+    for s in secrets:
+        if s:
+            text = text.replace(s, "***REDACTED***")
+    return text
+
+
+# Every subprocess that drives an interactive generator gets a hard timeout:
+# a misaligned answer queue would otherwise hang CI forever. On timeout the
+# test fails with captured stdout/stderr (secrets redacted).
+GEN_TIMEOUT = 15
+
+
 def run_sh_generator(answers, out_path):
     inp = "\n".join(answers) + "\n"
-    return subprocess.run(
-        [str(SH_GENERATOR), "--output", str(out_path)],
-        input=inp, capture_output=True, text=True, timeout=60,
-    )
+    try:
+        return subprocess.run(
+            [str(SH_GENERATOR), "--output", str(out_path)],
+            input=inp, capture_output=True, text=True, timeout=GEN_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        out = _redact((exc.stdout or b"").decode(errors="replace"),
+                      YOUTUBE_KEY, RUNTIME_KEY)
+        err = _redact((exc.stderr or b"").decode(errors="replace"),
+                      YOUTUBE_KEY, RUNTIME_KEY)
+        raise AssertionError(
+            f"generator timed out after {GEN_TIMEOUT}s (answer queue "
+            f"misaligned?)\nstdout: {out}\nstderr: {err}") from None
 
 
 def parse_yaml(path):

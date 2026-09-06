@@ -41,7 +41,7 @@ Jede interaktive Frage ist im Generator als `[MANDATORY]`, `[OPTIONAL]` oder `[C
 | Ausgabepfad | Optional | `portainer-youtube-mcp-stack.yml` | `mein-stack.yml` | Ziel der erzeugten Compose-Datei; wird als Kommandozeilenoption gesetzt. |
 | YouTube-MCP-Image-Version | Optional | `latest` | `latest` | Tag des MCP-Images (`ghcr.io/dracoform/chatgpt-youtube-mcp`). |
 | Tunnel-Image-Version | Optional | `0.1.0` | `0.1.0` | Tag des Tunnel-Images (`ghcr.io/dracoform/openai-mcp-tunnel`). |
-| YouTube Data API Key | Optional | leer | `AIza...` | Aktiviert offizielle Metadaten-, Channel- und Suchabfragen. Die Eingabe wird verdeckt. |
+| YouTube Data API Key | Optional | leer | `AIza...` | Aktiviert offizielle Metadaten-, Channel- und Suchabfragen. Die Eingabe wird verdeckt und nach der Eingabe maskiert bestaetigt. Anleitung: [docs/YOUTUBE_API_KEY.md](YOUTUBE_API_KEY.md) |
 | yt-dlp-Transcript-Abruf | Optional | `ja` | `ja` | Aktiviert den inoffiziellen Transcript-Fallback. |
 | Consent für yt-dlp | Bedingt verpflichtend | keiner | `JA` | Wird nur abgefragt, wenn yt-dlp aktiviert ist. |
 | Transcript-Sprachen | Optional | `de,en` | `de,en,fr` | Bevorzugte Untertitelsprachen in Prioritätsreihenfolge. |
@@ -66,6 +66,8 @@ Vor dem Deployment müssen beide Images tatsächlich in GHCR vorhanden sein:
 
 - `ghcr.io/dracoform/chatgpt-youtube-mcp:latest` (veröffentlicht)
 - `ghcr.io/dracoform/openai-mcp-tunnel:0.1.0` (**geplant, noch nicht veröffentlicht**; siehe `docs/OPENAI_SECURE_MCP_TUNNEL.md`)
+
+How to obtain a YouTube Data API key: [docs/YOUTUBE_API_KEY.md](YOUTUBE_API_KEY.md).
 
 Der Tunnel-Container erfüllt diesen Vertrag:
 

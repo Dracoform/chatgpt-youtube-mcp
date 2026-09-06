@@ -324,6 +324,8 @@ printf '%s\n' \
   "  Tunnel: $tunnel_image" \
   "" \
   "Die Datei enthaelt Secrets und wurde mit restriktiven Dateirechten geschrieben." \
+  "YouTube API key Anleitung:" \
+  "  https://github.com/Dracoform/chatgpt-youtube-mcp/blob/main/docs/YOUTUBE_API_KEY.md" \
   "Der Tunnel-Container published keinen Host-Port; die Health-Endpunkte des" \
   "Tunnel-Clients bleiben innerhalb des Containers (Loopback)." \
   "In Portainer: Stacks -> Add stack -> Web editor -> Inhalt einfuegen -> Deploy the stack"

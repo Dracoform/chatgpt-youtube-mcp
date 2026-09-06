@@ -45,12 +45,31 @@ def has_pwsh():
     return bool(shutil.which("pwsh"))
 
 
+# Hard timeout so a misaligned answer queue can never hang CI; on timeout
+# the captured output is included with secrets redacted.
+GEN_TIMEOUT = 15
+SECRETS = [a for a in ANSWERS if a.startswith(("AIza", "sk-"))]
+
+
+def _redact(text):
+    for s in SECRETS:
+        if s:
+            text = text.replace(s, "***REDACTED***")
+    return text
+
+
 def run_bash(out_path):
     inp = "\n".join(ANSWERS) + "\n"
-    return subprocess.run(
-        ["bash", str(SH_GENERATOR), "--output", str(out_path)],
-        input=inp, capture_output=True, text=True,
-    )
+    try:
+        return subprocess.run(
+            ["bash", str(SH_GENERATOR), "--output", str(out_path)],
+            input=inp, capture_output=True, text=True, timeout=GEN_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            f"bash generator timed out after {GEN_TIMEOUT}s (answer queue "
+            f"misaligned?)\nstdout: {_redact((exc.stdout or b'').decode(errors='replace'))}\n"
+            f"stderr: {_redact((exc.stderr or b'').decode(errors='replace'))}") from None
 
 
 def run_pwsh(out_dir):
@@ -84,10 +103,16 @@ function global:Read-Host {{
 & '{PS1_GENERATOR}' -OutputPath '{out_dir / 'stack.yml'}'
 exit 0
 """
-    return subprocess.run(
-        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
-        capture_output=True, text=True,
-    )
+    try:
+        return subprocess.run(
+            ["pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, timeout=GEN_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            f"pwsh generator timed out after {GEN_TIMEOUT}s (answer queue "
+            f"misaligned?)\nstdout: {_redact((exc.stdout or b'').decode(errors='replace'))}\n"
+            f"stderr: {_redact((exc.stderr or b'').decode(errors='replace'))}") from None
 
 
 @unittest.skipUnless(has_pwsh(), "pwsh not available on this host (CI runs it)")
