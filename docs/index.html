@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; connect-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; font-src 'self'">
+  <title>Portainer Stack Generator — chatgpt-youtube-mcp</title>
+  <link rel="icon" type="image/png" href="assets/youtube-mcp-icon.png">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header>
+    <img class="logo" src="assets/youtube-mcp-icon.png" width="64" height="64"
+         alt="ChatGPT YouTube MCP">
+    <h1>Portainer Stack Generator</h1>
+    <p>
+      Creates the Compose YAML for the
+      <a href="https://github.com/Dracoform/chatgpt-youtube-mcp">chatgpt-youtube-mcp</a>
+      stack: the read-only YouTube MCP server plus the OpenAI Secure MCP Tunnel.
+    </p>
+  </header>
+
+  <section id="privacy" class="callout">
+    <h2>Privacy</h2>
+    <p>
+      <strong>Everything on this page runs locally in your browser.</strong>
+      The generated YAML and every value you enter exist only in this page's
+      memory while it is open. The application performs <strong>no network
+      requests after loading</strong> — nothing is uploaded, submitted,
+      stored, or logged anywhere. When you are done, use
+      <em>Clear all sensitive data</em> or simply close the tab.
+    </p>
+    <p class="note">
+      The operating-system clipboard temporarily contains your secrets after
+      you copy the YAML. Ordinary web JavaScript cannot securely erase
+      physical memory or reliably clear every platform clipboard — paste into
+      Portainer and clear your clipboard promptly.
+    </p>
+  </section>
+
+  <nav class="links">
+    <h2>Guides</h2>
+    <ul>
+      <li><a href="YOUTUBE_API_KEY.md">How to obtain a YouTube Data API key</a></li>
+      <li><a href="OPENAI_SECURE_MCP_TUNNEL.md">OpenAI Secure MCP Tunnel deployment</a></li>
+      <li><a href="PORTAINER_STACK_GENERATORS.md">All generator variants (web, Bash, PowerShell)</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <form id="generator-form" autocomplete="off" novalidate>
+      <!-- NOTE: the form has no action and JS blocks submission; values never leave the page. -->
+
+      <fieldset>
+        <legend>Container images</legend>
+
+        <div class="field">
+          <label for="mcp_tag"><span class="tag optional">[OPTIONAL]</span> YouTube-MCP image tag</label>
+          <input id="mcp_tag" name="mcp_tag" type="text" value="latest"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <p class="hint">Example: <code>latest</code>. Image:
+            <code>ghcr.io/dracoform/chatgpt-youtube-mcp</code>.</p>
+        </div>
+
+        <div class="field">
+          <label for="tunnel_tag"><span class="tag optional">[OPTIONAL]</span> Tunnel image tag</label>
+          <input id="tunnel_tag" name="tunnel_tag" type="text" value="0.1.0"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <p class="hint">Example: <code>0.1.0</code>. Image:
+            <code>ghcr.io/dracoform/openai-mcp-tunnel</code>.</p>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>YouTube data source</legend>
+
+        <div class="field">
+          <label for="youtube_api_key"><span class="tag optional">[OPTIONAL]</span> YouTube Data API key</label>
+          <div class="secret-row">
+            <input id="youtube_api_key" name="youtube_api_key" type="password"
+                   autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+            <button type="button" id="yt-show" class="toggle" aria-pressed="false">Show</button>
+          </div>
+          <p class="hint">Example: <code>AIza...</code>. Leave empty to run without
+            official Data API calls (yt-dlp fallback only).
+            <a href="YOUTUBE_API_KEY.md">How to obtain a key</a>.</p>
+          <div id="yt-review" class="review hidden" aria-live="polite">
+            <p>Received YouTube API key:</p>
+            <pre id="yt-mask" class="mask"></pre>
+            <p>Length: <span id="yt-length"></span> characters</p>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="tag optional">[OPTIONAL]</span> <span class="label-text">Enable unofficial yt-dlp transcript retrieval?</span>
+          <div class="choice">
+            <label><input type="radio" name="enable_ytdlp" value="true" checked> Yes</label>
+            <label><input type="radio" name="enable_ytdlp" value="false"> No</label>
+          </div>
+          <p class="hint">Default: yes. Uses unofficial YouTube endpoints that can
+            be rate-limited or changed by YouTube.</p>
+        </div>
+
+        <div class="field hidden" id="consent-field">
+          <label for="ytdlp_consent"><span class="tag conditional">[CONDITIONAL]</span> yt-dlp consent — type <code>JA</code> to confirm</label>
+          <input id="ytdlp_consent" name="ytdlp_consent" type="text"
+                 autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false">
+          <p class="hint">Required only because yt-dlp is enabled. Example: <code>JA</code>.</p>
+        </div>
+
+        <div class="field">
+          <label for="languages"><span class="tag optional">[OPTIONAL]</span> Preferred transcript languages (comma-separated)</label>
+          <input id="languages" name="languages" type="text" value="de,en"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <p class="hint">Default: <code>de,en</code>. Example: <code>de,en,fr</code>.</p>
+        </div>
+
+        <div class="field">
+          <label for="max_chars"><span class="tag optional">[OPTIONAL]</span> Maximum transcript characters</label>
+          <input id="max_chars" name="max_chars" type="text" inputmode="numeric" value="60000"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <p class="hint">Default: <code>60000</code>. Allowed range: 1000–500000. Example: <code>100000</code>.</p>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>OpenAI Secure MCP Tunnel</legend>
+
+        <div class="field">
+          <label for="tunnel_id"><span class="tag mandatory">[MANDATORY]</span> OpenAI Tunnel ID (visible — not a secret)</label>
+          <input id="tunnel_id" name="tunnel_id" type="text" placeholder="tunnel_..."
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <p class="hint">Example: <code>tunnel_0123456789abcdef</code>. From
+            <a href="https://platform.openai.com/settings/organization/tunnels">OpenAI tunnel settings</a>.</p>
+        </div>
+
+        <div class="field">
+          <label for="runtime_api_key"><span class="tag mandatory">[MANDATORY]</span> OpenAI Runtime API key</label>
+          <div class="secret-row">
+            <input id="runtime_api_key" name="runtime_api_key" type="password"
+                   autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+            <button type="button" id="rt-show" class="toggle" aria-pressed="false">Show</button>
+          </div>
+          <p class="hint">Example: <code>sk-...</code>. From
+            <a href="https://platform.openai.com/settings/organization/api-keys">Runtime API keys</a>
+            (the tunnel needs Tunnels Read + Use permission).</p>
+          <div id="rt-review" class="review hidden" aria-live="polite">
+            <p>Received OpenAI Runtime API key:</p>
+            <pre id="rt-mask" class="mask"></pre>
+            <p>Length: <span id="rt-length"></span> characters</p>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="http_proxy"><span class="tag optional">[OPTIONAL]</span> Outbound proxy for the tunnel (HTTPS_PROXY)</label>
+          <input id="http_proxy" name="http_proxy" type="text" placeholder="http://proxy:3128"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <p class="hint">Example: <code>http://proxy:3128</code>. Only if your network
+            requires an outbound proxy. Sets <code>NO_PROXY=youtube-mcp,localhost,127.0.0.1</code>.</p>
+        </div>
+      </fieldset>
+
+      <div class="actions">
+        <button type="button" id="btn-generate">Generate YAML</button>
+        <button type="button" id="btn-copy" disabled>Copy YAML to clipboard</button>
+        <button type="button" id="btn-select" disabled>Select all YAML</button>
+        <button type="button" id="btn-clear" class="danger">Clear all sensitive data</button>
+        <button type="button" id="btn-restart" class="danger">Start over</button>
+      </div>
+      <p id="form-error" class="error hidden" aria-live="assertive"></p>
+    </form>
+
+    <section id="output" class="hidden">
+      <h2>Generated stack YAML</h2>
+      <p>
+        Copy this YAML and paste it into Portainer:
+        <strong>Stacks → Add stack → Web editor</strong>.
+        The file contains secrets — treat it accordingly.
+      </p>
+      <p id="copy-status" class="callout-note hidden" aria-live="polite"></p>
+      <textarea id="yaml-output" rows="24" spellcheck="false"
+                autocomplete="off" autocapitalize="off" autocorrect="off"
+                aria-label="Generated Portainer stack YAML"></textarea>
+      <p class="note">
+        Nothing is downloaded or saved: the YAML exists only in this page.
+        The operating-system clipboard temporarily contains secrets after
+        copying; JavaScript cannot reliably erase it on every platform.
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      Alternatives: the
+      <a href="PORTAINER_STACK_GENERATORS.md">Bash and PowerShell generators</a>
+      produce the same stack. Project:
+      <a href="https://github.com/Dracoform/chatgpt-youtube-mcp">github.com/Dracoform/chatgpt-youtube-mcp</a>.
+    </p>
+  </footer>
+
+  <script src="assets/generator.js"></script>
+</body>
+</html>
