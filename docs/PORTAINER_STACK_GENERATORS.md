@@ -4,6 +4,12 @@ Die Generatoren installieren nichts und benötigen auf dem ausführenden Rechner
 
 Beide Generatoren (Bash und PowerShell) erzeugen semantisch äquivalente YAML-Dateien mit festen Image-Adressen.
 
+## Web-Generator (empfohlen, läuft komplett im Browser)
+
+**https://dracoform.github.io/chatgpt-youtube-mcp/**
+
+Der Web-Generator läuft vollständig client-side: nach dem Laden macht die Seite keine Netzwerkzugriffe, es werden keine Werte hochgeladen, gespeichert oder geloggt. Geheimnisse und das erzeugte YAML existieren nur im Seitenspeicher. Das YAML wird im Browser angezeigt und per Copy/Paste in Portainer eingefügt (Stacks → Add stack → Web editor) — kein Download, keine Datei-Erstellung. Nach dem Kopieren enthält die System-Zwischenablage vorübergehend Geheimnisse. Alle drei Generatoren (Web, Bash, PowerShell) erzeugen denselben Stack-Vertrag.
+
 ## Bash
 
 ```bash

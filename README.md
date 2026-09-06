@@ -48,7 +48,7 @@ uv run youtube-current-data-mcp
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/INTERFACE.md](docs/INTERFACE.md), [docs/YOUTUBE_API_KEY.md](docs/YOUTUBE_API_KEY.md), [docs/CHATGPT_SETUP.md](docs/CHATGPT_SETUP.md), and [docs/END_TO_END_VALIDATION.md](docs/END_TO_END_VALIDATION.md).
 
-For a guided Portainer Web Editor stack, use either `generators/generate_docker-compose_for_ChatGPT_MCP.sh` on Bash or `generators/generate_docker-compose_for_ChatGPT_MCP.ps1` on PowerShell. Both scripts only generate YAML; they install and start nothing. See [docs/PORTAINER_STACK_GENERATORS.md](docs/PORTAINER_STACK_GENERATORS.md).
+For a guided Portainer Web Editor stack, use the hosted web generator at **https://dracoform.github.io/chatgpt-youtube-mcp/** — it runs entirely client-side in your browser: no values are uploaded, submitted, or persisted by the application, and it makes no network requests after loading. The generated YAML is displayed for copy/paste into Portainer; nothing is downloaded. The Bash (`generators/generate_docker-compose_for_ChatGPT_MCP.sh`) and PowerShell (`generators/generate_docker-compose_for_ChatGPT_MCP.ps1`) generators remain available as offline alternatives — all three produce the same stack. See [docs/PORTAINER_STACK_GENERATORS.md](docs/PORTAINER_STACK_GENERATORS.md).
 
 ## Security boundary
 

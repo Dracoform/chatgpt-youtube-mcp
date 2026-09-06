@@ -1,0 +1,172 @@
+/* Portainer stack generator — no external assets, no fonts, no trackers. */
+:root {
+  --bg: #101418;
+  --panel: #181e24;
+  --panel-2: #1f272e;
+  --text: #dfe6ec;
+  --muted: #9aa7b2;
+  --accent: #4da3ff;
+  --ok: #4fc47f;
+  --warn: #e0b34a;
+  --danger: #e06c6c;
+  --border: #2b353d;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0 auto;
+  padding: 1.5rem;
+  max-width: 56rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+a { color: var(--accent); }
+
+h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+h2 { font-size: 1.15rem; margin: 1.25rem 0 0.5rem; }
+
+header .logo { display: block; margin-bottom: 0.5rem; }
+
+header p { color: var(--muted); margin-top: 0; }
+
+.callout {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ok);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+}
+
+.callout h2 { margin-top: 0; }
+
+.callout-note {
+  background: var(--panel);
+  border: 1px solid var(--ok);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.note { color: var(--muted); font-size: 0.9rem; }
+
+.links ul { margin: 0.25rem 0; padding-left: 1.25rem; }
+
+fieldset {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 1rem 0;
+  padding: 0.75rem 1rem 1rem;
+}
+
+legend {
+  font-weight: 600;
+  padding: 0 0.4rem;
+  color: var(--accent);
+}
+
+.field { margin: 0.9rem 0; }
+
+label, .label-text { display: block; font-weight: 500; }
+
+input[type="text"], input[type="password"] {
+  width: 100%;
+  max-width: 34rem;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.95rem;
+  margin-top: 0.25rem;
+}
+
+input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+
+.secret-row { display: flex; gap: 0.5rem; align-items: center; }
+.secret-row input { flex: 1 1 auto; }
+
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+button.danger { border-color: var(--danger); color: var(--danger); }
+button.danger:hover:not(:disabled) { background: var(--danger); color: var(--bg); }
+
+.actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1rem 0; }
+
+.tag {
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  margin-right: 0.35rem;
+}
+.tag.mandatory { color: var(--danger); }
+.tag.optional { color: var(--accent); }
+.tag.conditional { color: var(--warn); }
+
+.hint { color: var(--muted); font-size: 0.85rem; margin: 0.25rem 0 0; }
+.hint code { background: var(--panel-2); padding: 0.05rem 0.3rem; border-radius: 3px; }
+
+.choice label { display: inline-block; margin-right: 1.25rem; font-weight: 400; }
+.choice input { margin-right: 0.35rem; }
+
+.review {
+  background: var(--panel-2);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.5rem;
+}
+.review p { margin: 0.15rem 0; }
+.review.hidden, .hidden { display: none; }
+
+.mask {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  word-break: break-all;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  margin: 0.35rem 0;
+  padding: 0;
+}
+
+#yaml-output {
+  width: 100%;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  padding: 0.6rem;
+  white-space: pre;
+}
+
+.error {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+footer {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
