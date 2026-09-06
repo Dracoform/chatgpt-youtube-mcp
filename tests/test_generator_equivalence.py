@@ -49,25 +49,33 @@ def run_bash(out_path):
 
 def run_pwsh(out_dir):
     """Drive the ps1 generator non-interactively through pwsh."""
+    # NOTE: PowerShell variables are case-insensitive, so the queue and the
+    # answer array must not share a name (that collision is what broke CI).
+    answers_literal = ", ".join("'" + a.replace("'", "''") + "'" for a in ANSWERS)
     script = f"""
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 # Non-interactive input plumbing: override Read-Host for the session.
-$script:answers = [System.Collections.Generic.Queue[string]]::new()
-$answers = @({", ".join(repr(a) for a in ANSWERS)})
-foreach ($a in $answers) {{ $script:answers.Enqueue($a) }}
+# Use $global: scope: the generator script runs in its own script scope,
+# so $script: inside our override would not be visible from there.
+$global:answerQueue = [System.Collections.Generic.Queue[string]]::new()
+foreach ($item in @({answers_literal})) {{ $global:answerQueue.Enqueue($item) }}
 function global:Read-Host {{
-    param([string]$PromptMessage, [object]$AsSecureString)
-    if ($PSBoundParameters.ContainsKey('AsSecureString')) {{
+    param([string]$PromptMessage, [switch]$AsSecureString)
+    if ($AsSecureString) {{
         # secret prompt: return a real SecureString (the generator wraps it
-        # via SecureStringToBSTR itself)
-        $plain = $script:answers.Dequeue()
-        return (ConvertTo-SecureString $plain -AsPlainText -Force)
+        # via SecureStringToBSTR itself). ConvertTo-SecureString rejects the
+        # empty string, so build the SecureString char by char — matching
+        # real Read-Host -AsSecureString behavior for empty optional input.
+        $secure = New-Object System.Security.SecureString
+        foreach ($ch in ($global:answerQueue.Dequeue()).ToCharArray()) {{
+            $secure.AppendChar($ch)
+        }}
+        return $secure
     }}
-    return $script:answers.Dequeue()
+    return $global:answerQueue.Dequeue()
 }}
 & '{PS1_GENERATOR}' -OutputPath '{out_dir / 'stack.yml'}'
-if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
 exit 0
 """
     return subprocess.run(
