@@ -1,85 +1,69 @@
 # End-to-end validation: ChatGPT → Secure MCP Tunnel → YouTube MCP
 
-Status: validated live with real credentials on 2026-09-06. Two defects
-found during validation are fixed on this branch; the fixes are pending a
-cold redeploy of the live Portainer stack (see "Pending" below). No
-secrets, API keys, full tunnel IDs, container IDs, or private
-infrastructure details are recorded here.
+Status: **validated and confirmed live** with real credentials on
+2026-09-06. Both defects found during the first validation round were
+fixed (PR #3), published to `ghcr.io/dracoform/chatgpt-youtube-mcp:latest`,
+and then **confirmed with a genuine cold Portainer deployment** of the
+regenerated stack (PR #4 dependency fix merged first). No secrets, API
+keys, runtime keys, full tunnel IDs, container IDs, private hostnames, IP
+addresses, or complete transcripts are recorded here.
 
-## Successful path
+## Round 1: initial live validation (found two defects)
 
-- ChatGPT tool discovery over the Secure MCP Tunnel: six read-only tools
-  discovered, annotations confirmed.
-- Tunnel connection: tunnel metadata fetched, `tunnel-client` started,
-  MCP session initialized.
-- MCP protocol version: `2025-11-25`; server reported as
-  `YouTube Current Data (read-only)`.
-- Official YouTube Data API v3 request succeeded with the configured key.
-- Caption discovery via yt-dlp for a German StarCraft video:
-  `get_video` returned no usable availability signal (see Issue 2),
-  `list_caption_tracks` discovered the automatic original track
-  `de-orig`; no manual track existed; yt-dlp reported translation
-  support.
-- Transcript retrieval: `get_video_transcript` returned a successful
-  automatic German transcript with **767 segments**.
+The complete path worked end to end, but validation exposed:
 
-## Issue 1 found during validation: container startup race
+1. **Container startup race** — the tunnel started before youtube-mcp
+   listened on 8765 (`connection refused`, then `Uvicorn running`).
+   Fixed by the MCP `/healthz` readiness endpoint, a Python-stdlib
+   Docker HEALTHCHECK, and
+   `depends_on: youtube-mcp: {condition: service_healthy}`.
+2. **Misleading caption availability** — the official Data API
+   `caption=false` for a video whose automatic German captions existed
+   and downloaded successfully. Fixed by the
+   `youtube_api_caption_flag` / `caption_available: null (unknown)`
+   contract.
 
-On cold deployment the tunnel started before youtube-mcp listened on
-port 8765. Evidence: `Post http://youtube-mcp:8765/mcp: dial tcp
-…:8765: connect: connection refused` from the tunnel, followed shortly
-by `Uvicorn running on http://0.0.0.0:8765` in the MCP logs. Restarting
-only the tunnel container immediately initialized the MCP session.
+Both fixes were regression-tested offline and published.
 
-Addressed on this branch: a real `/healthz` HTTP readiness endpoint on
-the MCP port itself (FastMCP custom route on the same uvicorn listener),
-a Python-stdlib Docker HEALTHCHECK against it (no curl/wget), and
-`depends_on: youtube-mcp: {condition: service_healthy}` in both
-generated Compose variants.
+## Round 2: cold-deploy confirmation (all checks passed)
 
-## Issue 2 found during validation: misleading caption availability
+Observed after a genuine cold Portainer deployment of the regenerated
+stack:
 
-The official Data API `caption=false` for the test video even though
-automatic German captions existed and downloaded successfully. The old
-`caption_available: false` made a stronger claim than the source
-supports.
+1. Startup/readiness:
+   - youtube-mcp became **healthy before openai-tunnel started**.
+   - The tunnel initialized the MCP session **on its first attempt**.
+   - **No connection-refused error occurred.**
+   - MCP protocol version: `2025-11-25`.
+   - Server: `YouTube Current Data (read-only)`, version `1.29.1`.
+2. Caption-semantics regression check:
+   - `get_video`: `youtube_api_caption_flag: false`,
+     `caption_available: null` — the official false is no longer
+     presented as proof of absence.
+   - `list_caption_tracks`: no manual tracks; automatic original track
+     `de-orig` present with formats `json3, srt, srv1, srv2, srv3,
+     ttml, vtt`.
+   - `get_video_transcript`: returned language `de`, `automatic: true`,
+     **767 segments**, transcript retrieval successful.
 
-Addressed on this branch: `get_video` now reports the raw value as
-`youtube_api_caption_flag` and maps an official false to
-`caption_available: null` (unknown) — only positive knowledge is `true`,
-and `false` is reserved for an authoritative discovery operation.
-`list_caption_tracks` is documented as authoritative for manual and
-automatic tracks; the `get_video` tool description instructs ChatGPT
-accordingly. `get_video` does not spawn yt-dlp just to resolve the
-flag. Regression fixtures cover the observed contradiction.
+The two original defects are therefore **live-validated and closed**.
 
 ## Health endpoint semantics
 
-- Tunnel `/healthz` is **process liveness only**. It does not prove that
-  the MCP dependency is reachable — which is exactly why the startup
-  race was invisible to the tunnel healthcheck.
+- **MCP `/healthz`** proves **MCP listener readiness**: the uvicorn
+  listener on 8765 accepts connections and the application is serving.
+  This is what the Docker HEALTHCHECK and the
+  `service_healthy` dependency wait for.
+- **Tunnel `/healthz`** proves **tunnel process liveness only**. It does
+  not prove that the MCP dependency is reachable — which is why the
+  startup race was invisible to the tunnel healthcheck.
 - Tunnel `/readyz` would additionally gate on control-plane/MCP
-  readiness, but its exact semantics were not tested in a container
-  during this validation. Changing the tunnel healthcheck to `/readyz`
-  is therefore deliberately **not** done here; it requires its own
-  live test first.
-- MCP `/healthz` (new) proves the uvicorn listener on 8765 accepts
-  connections and the application is serving — this is what the
-  `service_healthy` dependency waits for.
+  readiness, but its exact semantics have not been tested in a
+  container. Switching the tunnel healthcheck to `/readyz` remains
+  deliberately **not done**; it requires its own live test first.
 
 ## OAuth note
 
 The upstream OAuth discovery warning from the tunnel is non-blocking:
 this MCP intentionally exposes no app-level OAuth; all tools are
 read-only and unauthenticated at the MCP layer.
-
-## Pending
-
-- Merge this branch; the `publish-container` workflow on `main` will
-  rebuild and replace `ghcr.io/dracoform/chatgpt-youtube-mcp:latest`
-  (documented, intended behavior — see PR description).
-- Cold-redeploy the live Portainer stack from the regenerated YAML and
-  confirm: youtube-mcp becomes healthy before the tunnel starts, the
-  tunnel initializes the MCP session on the first attempt, and a
-  German automatic-caption transcript still retrieves successfully.
-  This final live confirmation is pending.

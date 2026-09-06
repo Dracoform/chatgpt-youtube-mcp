@@ -24,7 +24,7 @@ The repository also prepares a thin wrapper image around the official OpenAI `tu
 ghcr.io/dracoform/openai-mcp-tunnel:0.1.0
 ```
 
-Status: the wrapper implementation is prepared and tested without production credentials. The public image and complete ChatGPT-to-YouTube path are not yet claimed as validated. See [docs/OPENAI_SECURE_MCP_TUNNEL.md](docs/OPENAI_SECURE_MCP_TUNNEL.md) and [docs/OPENAI_MCP_TUNNEL_IMAGE_RESEARCH.md](docs/OPENAI_MCP_TUNNEL_IMAGE_RESEARCH.md).
+Status: the wrapper is live-validated — the complete ChatGPT → Secure MCP Tunnel → YouTube path passed a credentialed end-to-end test and a cold Portainer deployment (see [docs/END_TO_END_VALIDATION.md](docs/END_TO_END_VALIDATION.md)). See [docs/OPENAI_SECURE_MCP_TUNNEL.md](docs/OPENAI_SECURE_MCP_TUNNEL.md) and [docs/OPENAI_MCP_TUNNEL_IMAGE_RESEARCH.md](docs/OPENAI_MCP_TUNNEL_IMAGE_RESEARCH.md) for design details.
 
 ## Quick start
 
