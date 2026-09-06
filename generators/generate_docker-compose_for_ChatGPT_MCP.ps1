@@ -241,7 +241,8 @@ if (-not [string]::IsNullOrWhiteSpace($httpProxy)) {
     $lines.Add("      NO_PROXY: 'youtube-mcp,localhost,127.0.0.1'")
 }
 $lines.Add("    depends_on:")
-$lines.Add("      - youtube-mcp")
+$lines.Add("      youtube-mcp:")
+$lines.Add("        condition: service_healthy")
 $lines.Add("    read_only: true")
 $lines.Add("    tmpfs:")
 $lines.Add("      - /tmp:size=16m")

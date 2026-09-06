@@ -4,7 +4,9 @@ No Docker and no real credentials required. Executable PowerShell tests run
 wherever pwsh is available (CI ubuntu runners); they self-skip elsewhere.
 """
 
+import json
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -15,6 +17,7 @@ REPO = Path(__file__).resolve().parent.parent
 SH_GENERATOR = REPO / "generators" / "generate_docker-compose_for_ChatGPT_MCP.sh"
 PS1_GENERATOR = REPO / "generators" / "generate_docker-compose_for_ChatGPT_MCP.ps1"
 ENTRYPOINT = REPO / "docker" / "openai-mcp-tunnel" / "entrypoint.sh"
+MCP_DOCKERFILE = REPO / "Dockerfile"
 DOCKERFILE = REPO / "docker" / "openai-mcp-tunnel" / "Dockerfile"
 VERSIONS = REPO / "docker" / "openai-mcp-tunnel" / "versions.env"
 
@@ -158,6 +161,13 @@ class TestBashGenerator(unittest.TestCase):
         env = parse_yaml(out)["services"]["openai-tunnel"]["environment"]
         self.assertEqual(env["CONTROL_PLANE_API_KEY"], "sk-it's-quoted")
 
+    def test_tunnel_depends_on_service_healthy(self):
+        out, _ = self.generate()
+        tun = parse_yaml(out)["services"]["openai-tunnel"]
+        self.assertEqual(
+            tun["depends_on"], {"youtube-mcp": {"condition": "service_healthy"}}
+        )
+
     def test_expected_security_options(self):
         out, _ = self.generate()
         tun = parse_yaml(out)["services"]["openai-tunnel"]
@@ -166,7 +176,9 @@ class TestBashGenerator(unittest.TestCase):
         self.assertEqual(tun["cap_drop"], ["ALL"])
         self.assertIn("no-new-privileges:true", tun["security_opt"])
         self.assertEqual(str(tun["stop_grace_period"]), "30s")
-        self.assertEqual(tun["depends_on"], ["youtube-mcp"])
+        self.assertEqual(
+            tun["depends_on"], {"youtube-mcp": {"condition": "service_healthy"}}
+        )
 
     def test_ascii_only_output(self):
         _out, r = self.generate()
@@ -370,6 +382,10 @@ class TestPowerShellGeneratorStatic(unittest.TestCase):
                        "depends_on:", "NO_PROXY: 'youtube-mcp,localhost,127.0.0.1'"]:
             self.assertIn(needle, self.text)
 
+    def test_tunnel_depends_on_service_healthy(self):
+        self.assertIn("youtube-mcp:", self.text)  # mapping key
+        self.assertIn("condition: service_healthy", self.text)
+
     def test_masked_confirmation_present(self):
         self.assertIn("Read-SecretText", self.text)
         self.assertIn("Confirm", self.text)
@@ -402,6 +418,76 @@ class TestTunnelWrapperFiles(unittest.TestCase):
     def test_entrypoint_executable_bit(self):
         mode = stat.S_IMODE(ENTRYPOINT.stat().st_mode)
         self.assertTrue(mode & 0o111, "entrypoint.sh must be executable")
+
+    def test_healthcheck_python_command_is_stdlib_and_targets_healthz(self):
+        dockerfile = MCP_DOCKERFILE.read_text()
+        m = re.search(r"HEALTHCHECK[^\n]*\n\s*CMD \[(.*?)\]", dockerfile, re.S)
+        self.assertIsNotNone(m, "Dockerfile must define a HEALTHCHECK CMD")
+        cmd = json.loads("[" + m.group(1) + "]")
+        self.assertEqual(cmd[0], "python3")
+        code = cmd[2]
+        self.assertIn("/healthz", code)
+        self.assertIn("urllib", code)
+        # no curl/wget may be installed or invoked for the healthcheck
+        self.assertNotIn("apt-get", dockerfile)
+        self.assertNotIn("RUN apt", dockerfile)
+        for line in dockerfile.splitlines():
+            if line.strip().startswith("#"):
+                continue
+            self.assertNotIn("curl", line)
+            self.assertNotIn("wget", line)
+
+    def test_healthcheck_detects_delayed_listener(self):
+        """Deterministic delayed-readiness test without Docker or credentials.
+
+        Starts a plain stdlib HTTP server after a delay on port 8765 and
+        runs the exact healthcheck command from the Dockerfile: it must
+        fail while no listener exists and succeed once /healthz responds.
+        """
+        dockerfile = MCP_DOCKERFILE.read_text()
+        m = re.search(r"HEALTHCHECK[^\n]*\n\s*CMD \[(.*?)\]", dockerfile, re.S)
+        cmd = json.loads("[" + m.group(1) + "]")
+        script = (
+            "import socket, subprocess, sys, time, threading\n"
+            "def up():\n"
+            "    s = socket.socket()\n"
+            "    try: s.connect(('127.0.0.1', 8765)); return True\n"
+            "    except OSError: return False\n"
+            "    finally: s.close()\n"
+            "self_fail = subprocess.run(cmd, capture_output=True)\n"
+            "if self_fail.returncode == 0:\n"
+            "    print('FAIL: healthcheck passed with no listener'); sys.exit(1)\n"
+            "import http.server\n"
+            "class H(http.server.BaseHTTPRequestHandler):\n"
+            "    def do_GET(self):\n"
+            "        body = b'{\"status\": \"ok\"}'\n"
+            "        self.send_response(200)\n"
+            "        self.send_header('Content-Type', 'application/json')\n"
+            "        self.send_header('Content-Length', str(len(body)))\n"
+            "        self.end_headers()\n"
+            "        self.wfile.write(body)\n"
+            "    def log_message(self, *a): pass\n"
+            "srv = http.server.HTTPServer(('127.0.0.1', 8765), H)\n"
+            "t = threading.Thread(target=srv.serve_forever, daemon=True)\n"
+            "t.start()\n"
+            "ok = subprocess.run(cmd, capture_output=True)\n"
+            "srv.shutdown()\n"
+            "sys.exit(ok.returncode)\n"
+        )
+        harness = (
+            "import json, subprocess, sys\n"
+            "cmd = " + repr(cmd) + "\n"
+            + script.replace("cmd", "cmd")
+        )
+        out = tempfile.NamedTemporaryFile('w', suffix='.py', delete=False)
+        out.write(harness)
+        out.close()
+        try:
+            r = subprocess.run(["python3", out.name], capture_output=True,
+                               text=True, timeout=30)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        finally:
+            os.unlink(out.name)
 
     def test_entrypoint_uses_official_name_with_legacy_alias(self):
         text = ENTRYPOINT.read_text()

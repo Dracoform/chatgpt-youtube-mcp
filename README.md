@@ -46,7 +46,7 @@ uv run python scripts/live_smoke.py 'https://www.youtube.com/watch?v=VIDEO_ID'
 uv run youtube-current-data-mcp
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/INTERFACE.md](docs/INTERFACE.md), [docs/YOUTUBE_API_KEY.md](docs/YOUTUBE_API_KEY.md), and [docs/CHATGPT_SETUP.md](docs/CHATGPT_SETUP.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/INTERFACE.md](docs/INTERFACE.md), [docs/YOUTUBE_API_KEY.md](docs/YOUTUBE_API_KEY.md), [docs/CHATGPT_SETUP.md](docs/CHATGPT_SETUP.md), and [docs/END_TO_END_VALIDATION.md](docs/END_TO_END_VALIDATION.md).
 
 For a guided Portainer Web Editor stack, use either `generators/generate_docker-compose_for_ChatGPT_MCP.sh` on Bash or `generators/generate_docker-compose_for_ChatGPT_MCP.ps1` on PowerShell. Both scripts only generate YAML; they install and start nothing. See [docs/PORTAINER_STACK_GENERATORS.md](docs/PORTAINER_STACK_GENERATORS.md).
 

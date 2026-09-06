@@ -98,6 +98,110 @@ class CoreTests(unittest.TestCase):
             ("de", False), ("en", True), ("en-orig", True),
         ])
 
+    # ---- regression: official caption flag is non-authoritative -------------
+    # Live evidence (2026-09-06): a video with contentDetails.caption=false
+    # still had an automatic German "de-orig" track that yt-dlp discovered
+    # and downloaded (767 transcript segments). The official flag only
+    # reports manual captions.
+
+    OFFICIAL_PAYLOAD_CAPTION_FALSE = {"items": [{
+        "id": "dQw4w9WgXcQ",
+        "snippet": {"title": "StarCraft", "description": "DE", "channelId": "UC1",
+                    "channelTitle": "Channel", "publishedAt": "2026-01-01T00:00:00Z"},
+        "contentDetails": {"duration": "PT30M", "caption": "false"},
+        "statistics": {"viewCount": "12"},
+    }]}
+
+    YTDLP_INFO_DE_ORIG = {
+        "id": "dQw4w9WgXcQ",
+        "title": "StarCraft",
+        "subtitles": {},  # no manual tracks
+        "automatic_captions": {
+            "de": [{"ext": "json3", "url": "https://captions/de-translation"}],
+            "de-orig": [{"ext": "json3", "url": "https://captions/de-orig"}],
+        },
+    }
+
+    JSON3_SEGMENTS = (
+        b'{"events": ['
+        b'{"tStartMs": 0, "dDurationMs": 2000, "segs": [{"utf8": "Hallo"}]}, '
+        b'{"tStartMs": 2000, "dDurationMs": 2000, "segs": [{"utf8": "Welt"}]}'
+        b']}'
+    )
+
+    def _service_caption_false(self):
+        payload = self.OFFICIAL_PAYLOAD_CAPTION_FALSE
+
+        def fake_urlopen(request, timeout=0):
+            return Response(json.dumps(payload).encode())
+
+        return YouTubeService(Settings(api_key="secret"), urlopen=fake_urlopen)
+
+    def test_official_caption_false_is_not_caption_unavailable(self):
+        service = self._service_caption_false()
+        result = service.get_video("dQw4w9WgXcQ")
+        video = result["video"]
+        # raw official value preserved, clearly named
+        self.assertFalse(video["youtube_api_caption_flag"])
+        # an official false must NOT become an authoritative "no captions"
+        self.assertIsNone(video["caption_available"])
+        # and get_video must not have spawned yt-dlp just to resolve this
+        self.assertTrue(result["provenance"]["official"])
+
+    def test_official_caption_true_is_positive_knowledge(self):
+        payload = json.loads(json.dumps(self.OFFICIAL_PAYLOAD_CAPTION_FALSE))
+        payload["items"][0]["contentDetails"]["caption"] = "true"
+
+        def fake_urlopen(request, timeout=0):
+            return Response(json.dumps(payload).encode())
+
+        service = YouTubeService(Settings(api_key="secret"), urlopen=fake_urlopen)
+        video = service.get_video("dQw4w9WgXcQ")["video"]
+        self.assertTrue(video["youtube_api_caption_flag"])
+        self.assertTrue(video["caption_available"])
+
+    def test_list_caption_tracks_reports_de_orig_as_automatic(self):
+        info = self.YTDLP_INFO_DE_ORIG
+
+        def fake_run(command, capture_output, text, timeout, check):
+            completed = subprocess.CompletedProcess(command, 0, json.dumps(info), "")
+            return completed
+
+        service = YouTubeService(Settings(api_key="secret"), run=fake_run)
+        result = service.list_caption_tracks("dQw4w9WgXcQ")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["manual_tracks"], [])
+        self.assertEqual(
+            [t["language"] for t in result["automatic_original_tracks"]],
+            ["de-orig"],
+        )
+        self.assertIn("de", result["automatic_translation_languages"])
+
+    def test_transcript_retrieval_succeeds_via_de_orig(self):
+        info = self.YTDLP_INFO_DE_ORIG
+        requested_urls = []
+
+        def fake_run(command, capture_output, text, timeout, check):
+            return subprocess.CompletedProcess(command, 0, json.dumps(info), "")
+
+        def fake_urlopen(request, timeout=0):
+            requested_urls.append(request.full_url)
+            return Response(self.JSON3_SEGMENTS)
+
+        service = YouTubeService(Settings(api_key="secret"),
+                                 urlopen=fake_urlopen, run=fake_run)
+        result = service.get_video_transcript("dQw4w9WgXcQ", languages=["de"])
+        self.assertTrue(result["ok"])
+        # an automatic track was used, not a manual one
+        self.assertTrue(result["automatic"])
+        self.assertTrue(result["language"].startswith("de"))
+        self.assertGreaterEqual(result["segment_count"], 2)
+        self.assertIn("Hallo", result["transcript"])
+        # de-orig was among the track candidates yt-dlp discovered
+        self.assertTrue(result["automatic"])
+        candidates = YouTubeService._track_candidates(info, ["de"])
+        self.assertIn(("de-orig", True), [(lang, auto) for lang, auto, _ in candidates])
+
     def test_default_languages_from_environment(self):
         previous = os.environ.get("YOUTUBE_DEFAULT_LANGUAGES")
         try:

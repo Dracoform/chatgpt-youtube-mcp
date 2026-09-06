@@ -207,7 +207,14 @@ class YouTubeService:
             "channel_title": snippet.get("channelTitle"),
             "published_at": snippet.get("publishedAt"),
             "duration_iso8601": details.get("duration"),
-            "caption_available": details.get("caption") == "true",
+            # The official `caption` flag only reports manual caption tracks.
+            # A "false" here is NOT proof that captions are unavailable:
+            # automatic (ASR) tracks can still exist and yt-dlp discovers
+            # them. Use None ("unknown") for official false; positive
+            # knowledge only when the flag is true. list_caption_tracks is
+            # authoritative for actual caption discovery.
+            "youtube_api_caption_flag": details.get("caption") == "true",
+            "caption_available": True if details.get("caption") == "true" else None,
             "view_count": int(stats["viewCount"]) if stats.get("viewCount") else None,
             "like_count": int(stats["likeCount"]) if stats.get("likeCount") else None,
             "tags": snippet.get("tags", []),
