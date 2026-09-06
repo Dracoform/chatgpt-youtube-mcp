@@ -112,9 +112,12 @@ class CoreTests(unittest.TestCase):
     def test_bash_generator_writes_private_stack_without_echoing_secrets(self):
         script = Path(__file__).parents[1] / "generators" / "generate_docker-compose_for_ChatGPT_MCP.sh"
         script.read_bytes().decode("ascii")
+        # new prompt flow: tags, youtube key, key confirm, ytdlp(no),
+        # languages, max chars, tunnel id, runtime key, key confirm, proxy
         answers = "\n".join([
-            "", "", "", "", "JA", "", "",
-            "tunnel_0123456789abcdef0123456789abcdef", "runtime-secret-value", "",
+            "", "", "", "y", "n", "", "",
+            "tunnel_0123456789abcdef0123456789abcdef",
+            "sk-runtime-secret-value", "y", "",   # sk- prefix avoids the warning
         ])
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "stack.yml"
@@ -129,8 +132,8 @@ class CoreTests(unittest.TestCase):
             self.assertIn("ghcr.io/dracoform/chatgpt-youtube-mcp:latest", generated)
             self.assertIn("ghcr.io/dracoform/openai-mcp-tunnel:0.1.0", generated)
             self.assertIn("CONTROL_PLANE_TUNNEL_ID: 'tunnel_0123456789abcdef0123456789abcdef'", generated)
-            self.assertIn("CONTROL_PLANE_API_KEY: 'runtime-secret-value'", generated)
-            self.assertNotIn("runtime-secret-value", completed.stdout + completed.stderr)
+            self.assertIn("CONTROL_PLANE_API_KEY: 'sk-runtime-secret-value'", generated)
+            self.assertNotIn("sk-runtime-secret-value", completed.stdout + completed.stderr)
             messages = completed.stdout + completed.stderr
             self.assertIn("[MANDATORY]", messages)
             self.assertIn("[OPTIONAL]", messages)

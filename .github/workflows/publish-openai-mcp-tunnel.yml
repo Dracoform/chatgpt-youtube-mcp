@@ -40,7 +40,7 @@ jobs:
     name: Unit, static, and equivalence tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install bats
         run: |
@@ -56,7 +56,7 @@ jobs:
         run: bats docker/openai-mcp-tunnel/tests/test_entrypoint.bats
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -122,10 +122,10 @@ jobs:
           echo "digest=${LIVE}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx for smoke build
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build wrapper for amd64 (loaded locally, never pushed)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: docker/openai-mcp-tunnel
           platforms: linux/amd64
@@ -206,7 +206,7 @@ jobs:
           echo "pinned base resolves for linux/amd64 and linux/arm64"
 
       - name: Build wrapper for both platforms (multi-arch resolution check, not loaded)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: docker/openai-mcp-tunnel
           platforms: linux/amd64,linux/arm64
@@ -226,7 +226,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate version input before any login or publication
         id: validate-version
@@ -263,7 +263,7 @@ jobs:
           echo "digest=$LIVE" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -273,7 +273,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish multi-architecture wrapper
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: docker/openai-mcp-tunnel
           platforms: linux/amd64,linux/arm64
