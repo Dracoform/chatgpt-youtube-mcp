@@ -7,6 +7,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$DefaultMcpTag = "latest"
+$DefaultTunnelTag = "0.1.0"
+$McpImageBase = "ghcr.io/dracoform/chatgpt-youtube-mcp"
+$TunnelImageBase = "ghcr.io/dracoform/openai-mcp-tunnel"
+
 function Read-Value {
     param(
         [Parameter(Mandatory)] [string]$Prompt,
@@ -67,36 +72,35 @@ Write-Host ""
 Write-Host "ChatGPT YouTube MCP - Portainer-Stack-Generator"
 Write-Host "================================================"
 Write-Host ""
-Write-Host "Dieses Skript erzeugt nur den YAML-Code für Portainer."
+Write-Host "Dieses Skript erzeugt nur den YAML-Code fur Portainer."
 Write-Host "Es installiert weder Docker noch Container."
 Write-Host ""
 Write-Host "Kennzeichnung:"
 Write-Host "  [MANDATORY]             Eingabe ist erforderlich."
-Write-Host "  [OPTIONAL]              Enter übernimmt den Standardwert oder lässt das Feld leer."
+Write-Host "  [OPTIONAL]              Enter ubernimmt den Standardwert oder lasst das Feld leer."
 Write-Host "  [CONDITIONAL]           Nur erforderlich, wenn die genannte Funktion aktiv ist."
 Write-Host ""
 
-$registryNamespace = Read-Value -Prompt "[MANDATORY - TEMPORARY] Registry-Namespace (example: ghcr.io/my-github-name)" -Required
-$registryNamespace = $registryNamespace.TrimEnd("/")
-$mcpTag = Read-Value -Prompt "[OPTIONAL] Version des YouTube-MCP-Images (example: 0.1.0)" -Default "0.1.0"
-$tunnelTag = Read-Value -Prompt "[OPTIONAL] Version des Tunnel-Images (example: 0.1.0)" -Default "0.1.0"
-$mcpImage = "${registryNamespace}/youtube-current-data-mcp:${mcpTag}"
-$tunnelImage = "${registryNamespace}/openai-mcp-tunnel:${tunnelTag}"
+$mcpTag = Read-Value -Prompt "[OPTIONAL] Version des YouTube-MCP-Images (example: latest)" -Default $DefaultMcpTag
+$mcpImage = "${McpImageBase}:${mcpTag}"
+
+$tunnelTag = Read-Value -Prompt "[OPTIONAL] Version des Tunnel-Images (example: 0.1.0)" -Default $DefaultTunnelTag
+$tunnelImage = "${TunnelImageBase}:${tunnelTag}"
 
 $youtubeApiKey = Read-SecretText -Prompt "[OPTIONAL] YouTube Data API Key (example: AIza...; Enter = leer)"
-$enableYtDlp = Read-YesNo -Prompt "[OPTIONAL] Inoffiziellen Transcript-Abruf über yt-dlp aktivieren?" -Default $true
+$enableYtDlp = Read-YesNo -Prompt "[OPTIONAL] Inoffiziellen Transcript-Abruf uber yt-dlp aktivieren?" -Default $true
 if ($enableYtDlp) {
     Write-Host "Hinweis: Der Transcript-Abruf nutzt inoffizielle YouTube-Endpunkte und"
-    Write-Host "kann durch Rate-Limits oder Änderungen bei YouTube beeinträchtigt werden."
-    $consent = Read-Value -Prompt "[CONDITIONAL - MANDATORY] Consent: zum Bestätigen bitte JA eingeben (example: JA)" -Required
+    Write-Host "kann durch Rate-Limits oder Aenderungen bei YouTube beeintrachtigt werden."
+    $consent = Read-Value -Prompt "[CONDITIONAL - MANDATORY] Consent: zum Bestatigen bitte JA eingeben (example: JA)" -Required
     if ($consent.ToUpperInvariant() -ne "JA") {
-        throw "Einrichtung abgebrochen: Consent nicht bestätigt."
+        throw "Einrichtung abgebrochen: Consent nicht bestatigt."
     }
 }
 
 $languages = Read-Value -Prompt "[OPTIONAL] Bevorzugte Transcript-Sprachen, kommasepariert (example: de,en)" -Default "de,en"
 if ($languages -notmatch '^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$') {
-    throw "Ungültige Sprachenliste. Beispiel: de,en"
+    throw "Ungultige Sprachenliste. Beispiel: de,en"
 }
 
 $maxCharsText = Read-Value -Prompt "[OPTIONAL] Maximale Transcript-Zeichen (example: 60000)" -Default "60000"
@@ -110,61 +114,68 @@ if ($tunnelId -notmatch '^tunnel_[A-Za-z0-9_-]+$') {
     throw "Die Tunnel-ID muss mit tunnel_ beginnen."
 }
 $runtimeApiKey = Read-SecretText -Prompt "[MANDATORY] OpenAI Runtime API Key (example: sk-...; Eingabe verborgen)" -Required
+$httpProxy = Read-SecretText -Prompt "[OPTIONAL] Outbound-Proxy fur den Tunnel, HTTPS_PROXY (example: http://proxy:3128; Enter = keiner)"
 
 if (Test-Path -LiteralPath $OutputPath) {
-    if (-not (Read-YesNo -Prompt "[CONDITIONAL] Datei $OutputPath existiert. Überschreiben?" -Default $false)) {
-        throw "Keine Datei verändert."
+    if (-not (Read-YesNo -Prompt "[CONDITIONAL] Datei $OutputPath existiert. Uberschreiben?" -Default $false)) {
+        throw "Keine Datei verandert."
     }
 }
 
 $ytDlpText = if ($enableYtDlp) { "true" } else { "false" }
-$lines = @(
-    "# Von generate_docker-compose_for_ChatGPT_MCP.ps1 erzeugt. Enthält Secrets; Zugriff entsprechend beschränken."
-    "services:"
-    "  youtube-mcp:"
-    "    image: $(ConvertTo-YamlSingleQuoted $mcpImage)"
-    "    restart: unless-stopped"
-    "    environment:"
-    "      MCP_TRANSPORT: 'streamable-http'"
-    "      MCP_HOST: '0.0.0.0'"
-    "      MCP_PORT: '8765'"
-    "      YOUTUBE_API_KEY: $(ConvertTo-YamlSingleQuoted $youtubeApiKey)"
-    "      YOUTUBE_ENABLE_YTDLP: $(ConvertTo-YamlSingleQuoted $ytDlpText)"
-    "      YOUTUBE_TRANSCRIPT_MAX_CHARS: $(ConvertTo-YamlSingleQuoted $maxCharsText)"
-    "      YOUTUBE_DEFAULT_LANGUAGES: $(ConvertTo-YamlSingleQuoted $languages)"
-    "    expose:"
-    "      - '8765'"
-    "    read_only: true"
-    "    tmpfs:"
-    "      - /tmp:size=64m"
-    "    security_opt:"
-    "      - no-new-privileges:true"
-    "    networks:"
-    "      - youtube-mcp-internal"
-    ""
-    "  openai-tunnel:"
-    "    image: $(ConvertTo-YamlSingleQuoted $tunnelImage)"
-    "    restart: unless-stopped"
-    "    environment:"
-    "      OPENAI_TUNNEL_ID: $(ConvertTo-YamlSingleQuoted $tunnelId)"
-    "      CONTROL_PLANE_API_KEY: $(ConvertTo-YamlSingleQuoted $runtimeApiKey)"
-    "      MCP_SERVER_URL: 'http://youtube-mcp:8765/mcp'"
-    "    depends_on:"
-    "      - youtube-mcp"
-    "    volumes:"
-    "      - tunnel-config:/config"
-    "    security_opt:"
-    "      - no-new-privileges:true"
-    "    networks:"
-    "      - youtube-mcp-internal"
-    ""
-    "networks:"
-    "  youtube-mcp-internal:"
-    "    driver: bridge"
-    ""
-    "volumes:"
-    "  tunnel-config:"
-)
+$lines = [System.Collections.Generic.List[string]]::new()
+$lines.Add("# Von generate_docker-compose_for_ChatGPT_MCP.ps1 erzeugt. Enthalt Secrets; Zugriff entsprechend beschranken.")
+$lines.Add("services:")
+$lines.Add("  youtube-mcp:")
+$lines.Add("    image: $(ConvertTo-YamlSingleQuoted $mcpImage)")
+$lines.Add("    restart: unless-stopped")
+$lines.Add("    environment:")
+$lines.Add("      MCP_TRANSPORT: 'streamable-http'")
+$lines.Add("      MCP_HOST: '0.0.0.0'")
+$lines.Add("      MCP_PORT: '8765'")
+$lines.Add("      YOUTUBE_API_KEY: $(ConvertTo-YamlSingleQuoted $youtubeApiKey)")
+$lines.Add("      YOUTUBE_ENABLE_YTDLP: $(ConvertTo-YamlSingleQuoted $ytDlpText)")
+$lines.Add("      YOUTUBE_TRANSCRIPT_MAX_CHARS: $(ConvertTo-YamlSingleQuoted $maxCharsText)")
+$lines.Add("      YOUTUBE_DEFAULT_LANGUAGES: $(ConvertTo-YamlSingleQuoted $languages)")
+$lines.Add("    expose:")
+$lines.Add("      - '8765'")
+$lines.Add("    read_only: true")
+$lines.Add("    tmpfs:")
+$lines.Add("      - /tmp:size=64m")
+$lines.Add("    cap_drop:")
+$lines.Add("      - ALL")
+$lines.Add("    security_opt:")
+$lines.Add("      - no-new-privileges:true")
+$lines.Add("    networks:")
+$lines.Add("      - youtube-mcp-internal")
+$lines.Add("")
+$lines.Add("  openai-tunnel:")
+$lines.Add("    image: $(ConvertTo-YamlSingleQuoted $tunnelImage)")
+$lines.Add("    restart: unless-stopped")
+$lines.Add("    environment:")
+$lines.Add("      CONTROL_PLANE_TUNNEL_ID: $(ConvertTo-YamlSingleQuoted $tunnelId)")
+$lines.Add("      CONTROL_PLANE_API_KEY: $(ConvertTo-YamlSingleQuoted $runtimeApiKey)")
+$lines.Add("      MCP_SERVER_URL: 'http://youtube-mcp:8765/mcp'")
+if (-not [string]::IsNullOrWhiteSpace($httpProxy)) {
+    $lines.Add("      HTTPS_PROXY: $(ConvertTo-YamlSingleQuoted $httpProxy)")
+    $lines.Add("      NO_PROXY: 'youtube-mcp,localhost,127.0.0.1'")
+}
+$lines.Add("    depends_on:")
+$lines.Add("      - youtube-mcp")
+$lines.Add("    read_only: true")
+$lines.Add("    tmpfs:")
+$lines.Add("      - /tmp:size=16m")
+$lines.Add("    cap_drop:")
+$lines.Add("      - ALL")
+$lines.Add("    security_opt:")
+$lines.Add("      - no-new-privileges:true")
+$lines.Add("    stop_grace_period: 30s")
+$lines.Add("    networks:")
+$lines.Add("      - youtube-mcp-internal")
+$lines.Add("")
+$lines.Add("networks:")
+$lines.Add("  youtube-mcp-internal:")
+$lines.Add("    driver: bridge")
 
 $absoluteOutputPath = [IO.Path]::GetFullPath($OutputPath)
 $parent = Split-Path -Parent $absoluteOutputPath
@@ -172,7 +183,7 @@ if (-not (Test-Path -LiteralPath $parent)) {
     [void](New-Item -ItemType Directory -Path $parent -Force)
 }
 $utf8NoBom = [Text.UTF8Encoding]::new($false)
-[IO.File]::WriteAllText($absoluteOutputPath, ($lines -join [Environment]::NewLine) + [Environment]::NewLine, $utf8NoBom)
+[IO.File]::WriteAllText($absoluteOutputPath, ($lines -join "`n") + "`n", $utf8NoBom)
 
 Write-Host ""
 Write-Host "Stack erfolgreich erzeugt: $absoluteOutputPath"
@@ -181,5 +192,7 @@ Write-Host "Enthaltene Images:"
 Write-Host "  MCP:    $mcpImage"
 Write-Host "  Tunnel: $tunnelImage"
 Write-Host ""
-Write-Warning "Die Datei enthält die eingegebenen Secrets im Klartext."
-Write-Host "In Portainer: Stacks -> Add stack -> Web editor -> Inhalt einfügen -> Deploy the stack"
+Write-Warning "Die Datei enthalt die eingegebenen Secrets im Klartext."
+Write-Host "Der Tunnel-Container published keinen Host-Port; die Health-Endpunkte des"
+Write-Host "Tunnel-Clients bleiben innerhalb des Containers (Loopback)."
+Write-Host "In Portainer: Stacks -> Add stack -> Web editor -> Inhalt einfugen -> Deploy the stack"

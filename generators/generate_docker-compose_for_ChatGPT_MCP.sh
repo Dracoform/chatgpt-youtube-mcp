@@ -5,8 +5,10 @@ PROGRAM_NAME="generate_docker-compose_for_ChatGPT_MCP.sh"
 DEFAULT_OUTPUT="portainer-youtube-mcp-stack.yml"
 DEFAULT_LANGUAGES="de,en"
 DEFAULT_MAX_CHARS="60000"
-DEFAULT_MCP_TAG="0.1.0"
+DEFAULT_MCP_TAG="latest"
 DEFAULT_TUNNEL_TAG="0.1.0"
+MCP_IMAGE_BASE="ghcr.io/dracoform/chatgpt-youtube-mcp"
+TUNNEL_IMAGE_BASE="ghcr.io/dracoform/openai-mcp-tunnel"
 
 usage() {
   printf '%s\n' \
@@ -26,10 +28,10 @@ die() {
 prompt() {
   local __result_var="$1" prompt_text="$2" default_value="${3-}" answer
   if [[ -n "$default_value" ]]; then
-    read -r -p "$prompt_text [$default_value]: " answer
+    read -r -p "$prompt_text [$default_value]: " answer || true
     answer="${answer:-$default_value}"
   else
-    read -r -p "$prompt_text: " answer
+    read -r -p "$prompt_text: " answer || true
   fi
   printf -v "$__result_var" '%s' "$answer"
 }
@@ -46,7 +48,7 @@ prompt_required() {
 prompt_secret() {
   local __result_var="$1" prompt_text="$2" required="${3:-false}" answer=""
   while true; do
-    read -r -s -p "$prompt_text: " answer
+    read -r -s -p "$prompt_text: " answer || true
     printf '\n' >&2
     if [[ "$required" != "true" || -n "$answer" ]]; then
       break
@@ -60,7 +62,7 @@ prompt_yes_no() {
   local __result_var="$1" prompt_text="$2" default_value="${3:-yes}" answer suffix
   [[ "$default_value" == "yes" ]] && suffix="J/n" || suffix="j/N"
   while true; do
-    read -r -p "$prompt_text [$suffix]: " answer
+    read -r -p "$prompt_text [$suffix]: " answer || true
     answer="${answer:-$default_value}"
     case "${answer,,}" in
       j|ja|y|yes) printf -v "$__result_var" '%s' "true"; return ;;
@@ -106,11 +108,11 @@ printf '%s\n' \
   "  [CONDITIONAL]           Nur erforderlich, wenn die genannte Funktion aktiv ist." \
   ""
 
-prompt_required registry_namespace "[MANDATORY - TEMPORARY] Registry-Namespace (example: ghcr.io/my-github-name)"
-prompt mcp_tag "[OPTIONAL] Version des YouTube-MCP-Images (example: 0.1.0)" "$DEFAULT_MCP_TAG"
+prompt mcp_tag "[OPTIONAL] Version des YouTube-MCP-Images (example: latest)" "$DEFAULT_MCP_TAG"
+mcp_image="${MCP_IMAGE_BASE}:${mcp_tag}"
+
 prompt tunnel_tag "[OPTIONAL] Version des Tunnel-Images (example: 0.1.0)" "$DEFAULT_TUNNEL_TAG"
-mcp_image="${registry_namespace%/}/youtube-current-data-mcp:$mcp_tag"
-tunnel_image="${registry_namespace%/}/openai-mcp-tunnel:$tunnel_tag"
+tunnel_image="${TUNNEL_IMAGE_BASE}:${tunnel_tag}"
 
 prompt_secret youtube_api_key "[OPTIONAL] YouTube Data API Key (example: AIza...; Enter = leer)" false
 prompt_yes_no enable_ytdlp "[OPTIONAL] Inoffiziellen Transcript-Abruf ueber yt-dlp aktivieren?" yes
@@ -132,6 +134,7 @@ prompt max_chars "[OPTIONAL] Maximale Transcript-Zeichen (example: 60000)" "$DEF
 prompt_required tunnel_id "[MANDATORY] OpenAI Tunnel-ID (example: tunnel_0123456789abcdef)"
 [[ "$tunnel_id" =~ ^tunnel_[A-Za-z0-9_-]+$ ]] || die "Die Tunnel-ID muss mit tunnel_ beginnen."
 prompt_secret runtime_api_key "[MANDATORY] OpenAI Runtime API Key (example: sk-...; Eingabe verborgen)" true
+prompt_secret http_proxy "[OPTIONAL] Outbound-Proxy fuer den Tunnel, HTTPS_PROXY (example: http://proxy:3128; Enter = keiner)" false
 
 if [[ -e "$output_path" ]]; then
   prompt_yes_no overwrite "[CONDITIONAL] Datei $output_path existiert. Ueberschreiben?" no
@@ -140,6 +143,14 @@ fi
 
 tmp_path="${output_path}.tmp.$$"
 trap 'rm -f "$tmp_path"' EXIT
+
+# Tunnel-Umgebung: nur gesetzte Proxy-Variablen landen in der YAML.
+proxy_lines=""
+if [[ -n "$http_proxy" ]]; then
+  proxy_lines=$(printf '%s\n' \
+    "      HTTPS_PROXY: $(yaml_quote "$http_proxy")" \
+    "      NO_PROXY: 'youtube-mcp,localhost,127.0.0.1'")
+fi
 
 {
   printf '%s\n' \
@@ -161,6 +172,8 @@ trap 'rm -f "$tmp_path"' EXIT
     "    read_only: true" \
     "    tmpfs:" \
     "      - /tmp:size=64m" \
+    "    cap_drop:" \
+    "      - ALL" \
     "    security_opt:" \
     "      - no-new-privileges:true" \
     "    networks:" \
@@ -170,24 +183,31 @@ trap 'rm -f "$tmp_path"' EXIT
     "    image: $(yaml_quote "$tunnel_image")" \
     "    restart: unless-stopped" \
     "    environment:" \
-    "      OPENAI_TUNNEL_ID: $(yaml_quote "$tunnel_id")" \
+    "      CONTROL_PLANE_TUNNEL_ID: $(yaml_quote "$tunnel_id")" \
     "      CONTROL_PLANE_API_KEY: $(yaml_quote "$runtime_api_key")" \
-    "      MCP_SERVER_URL: 'http://youtube-mcp:8765/mcp'" \
+    "      MCP_SERVER_URL: 'http://youtube-mcp:8765/mcp'"
+
+  if [[ -n "$proxy_lines" ]]; then
+    printf '%s\n' "$proxy_lines"
+  fi
+
+  printf '%s\n' \
     "    depends_on:" \
     "      - youtube-mcp" \
-    "    volumes:" \
-    "      - tunnel-config:/config" \
+    "    read_only: true" \
+    "    tmpfs:" \
+    "      - /tmp:size=16m" \
+    "    cap_drop:" \
+    "      - ALL" \
     "    security_opt:" \
     "      - no-new-privileges:true" \
+    "    stop_grace_period: 30s" \
     "    networks:" \
     "      - youtube-mcp-internal" \
     "" \
     "networks:" \
     "  youtube-mcp-internal:" \
-    "    driver: bridge" \
-    "" \
-    "volumes:" \
-    "  tunnel-config:"
+    "    driver: bridge"
 } >"$tmp_path"
 
 chmod 600 "$tmp_path"
@@ -203,4 +223,6 @@ printf '%s\n' \
   "  Tunnel: $tunnel_image" \
   "" \
   "Die Datei enthaelt Secrets und wurde mit restriktiven Dateirechten geschrieben." \
+  "Der Tunnel-Container published keinen Host-Port; die Health-Endpunkte des" \
+  "Tunnel-Clients bleiben innerhalb des Containers (Loopback)." \
   "In Portainer: Stacks -> Add stack -> Web editor -> Inhalt einfuegen -> Deploy the stack"

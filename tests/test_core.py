@@ -113,8 +113,8 @@ class CoreTests(unittest.TestCase):
         script = Path(__file__).parents[1] / "generators" / "generate_docker-compose_for_ChatGPT_MCP.sh"
         script.read_bytes().decode("ascii")
         answers = "\n".join([
-            "ghcr.io/example-owner", "", "", "", "", "JA", "", "",
-            "tunnel_test123", "runtime-secret-value", "",
+            "", "", "", "", "JA", "", "",
+            "tunnel_0123456789abcdef0123456789abcdef", "runtime-secret-value", "",
         ])
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "stack.yml"
@@ -126,7 +126,9 @@ class CoreTests(unittest.TestCase):
                 check=True,
             )
             generated = output.read_text()
-            self.assertIn("ghcr.io/example-owner/youtube-current-data-mcp:0.1.0", generated)
+            self.assertIn("ghcr.io/dracoform/chatgpt-youtube-mcp:latest", generated)
+            self.assertIn("ghcr.io/dracoform/openai-mcp-tunnel:0.1.0", generated)
+            self.assertIn("CONTROL_PLANE_TUNNEL_ID: 'tunnel_0123456789abcdef0123456789abcdef'", generated)
             self.assertIn("CONTROL_PLANE_API_KEY: 'runtime-secret-value'", generated)
             self.assertNotIn("runtime-secret-value", completed.stdout + completed.stderr)
             messages = completed.stdout + completed.stderr
@@ -134,22 +136,27 @@ class CoreTests(unittest.TestCase):
             self.assertIn("[OPTIONAL]", messages)
             self.assertIn("[CONDITIONAL]", messages)
             script_text = script.read_text(encoding="ascii")
-            self.assertIn("[MANDATORY - TEMPORARY]", script_text)
             self.assertIn("[CONDITIONAL - MANDATORY]", script_text)
+            self.assertNotIn("OPENAI_TUNNEL_ID", generated)
+            self.assertNotIn("tunnel-config", generated)
+            self.assertNotIn("ports:", generated)
             self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
 
     def test_powershell_generator_contains_same_stack_contract(self):
         script = (Path(__file__).parents[1] / "generators" / "generate_docker-compose_for_ChatGPT_MCP.ps1").read_text()
         for required in (
-            "youtube-current-data-mcp", "openai-mcp-tunnel", "YOUTUBE_API_KEY",
-            "YOUTUBE_ENABLE_YTDLP", "YOUTUBE_DEFAULT_LANGUAGES",
-            "OPENAI_TUNNEL_ID", "CONTROL_PLANE_API_KEY", "MCP_SERVER_URL",
+            "ghcr.io/dracoform/chatgpt-youtube-mcp", "ghcr.io/dracoform/openai-mcp-tunnel",
+            "YOUTUBE_API_KEY", "YOUTUBE_ENABLE_YTDLP", "YOUTUBE_DEFAULT_LANGUAGES",
+            "CONTROL_PLANE_TUNNEL_ID", "CONTROL_PLANE_API_KEY", "MCP_SERVER_URL",
+            "read_only: true", "cap_drop:", "no-new-privileges:true", "stop_grace_period: 30s",
+            "NO_PROXY: 'youtube-mcp,localhost,127.0.0.1'",
         ):
             self.assertIn(required, script)
+        self.assertNotIn("OPENAI_TUNNEL_ID", script)
+        self.assertNotIn("tunnel-config", script)
         self.assertIn("Read-SecretText", script)
-        self.assertIn("[MANDATORY - TEMPORARY]", script)
-        self.assertIn("[OPTIONAL]", script)
         self.assertIn("[CONDITIONAL - MANDATORY]", script)
+        self.assertIn("[OPTIONAL]", script)
 
 
 if __name__ == "__main__":
