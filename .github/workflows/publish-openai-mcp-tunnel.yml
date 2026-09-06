@@ -10,12 +10,16 @@ on:
   push:
     paths:
       - 'docker/openai-mcp-tunnel/**'
+      - 'generators/**'
+      - 'tests/**'
       - '.github/workflows/publish-openai-mcp-tunnel.yml'
     branches:
       - '**'
   pull_request:
     paths:
       - 'docker/openai-mcp-tunnel/**'
+      - 'generators/**'
+      - 'tests/**'
       - '.github/workflows/publish-openai-mcp-tunnel.yml'
   workflow_dispatch:
     inputs:
@@ -33,7 +37,7 @@ env:
 
 jobs:
   test:
-    name: Unit and static tests
+    name: Unit, static, and equivalence tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,6 +54,26 @@ jobs:
 
       - name: Entrypoint unit tests (no credentials)
         run: bats docker/openai-mcp-tunnel/tests/test_entrypoint.bats
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python3 -m pip install --quiet PyYAML
+          python3 -m pip install --quiet .
+
+      - name: Run Python unittest suite (generators, wrapper files, equivalence)
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Executable PowerShell vs Bash generator equivalence
+        run: |
+          # Explicit equivalence run: pwsh is preinstalled on ubuntu runners,
+          # so the skipUnless guard in test_generator_equivalence.py does not
+          # trigger and the 9 structural comparison cases execute for real.
+          python3 -m unittest tests.test_generator_equivalence -v
 
       - name: Validate versions.env (fail closed on any missing/malformed pin)
         run: |
@@ -73,6 +97,7 @@ jobs:
           echo "versions.env pins complete for ${TUNNEL_CLIENT_VERSION}"
 
       - name: Verify pinned digest is the registry digest of the pinned tag
+        id: pins
         run: |
           set -euo pipefail
           cd docker/openai-mcp-tunnel
@@ -94,11 +119,93 @@ jobs:
             exit 1
           fi
           echo "Registry digest matches pin: ${LIVE}"
+          echo "digest=${LIVE}" >> "$GITHUB_OUTPUT"
 
-      - name: Dockerfile metadata and architecture resolution (no publish)
+      - name: Set up Docker Buildx for smoke build
         uses: docker/setup-buildx-action@v3
 
-      - name: Build wrapper for both platforms (local load, never pushed)
+      - name: Build wrapper for amd64 (loaded locally, never pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/openai-mcp-tunnel
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: openai-mcp-tunnel:ci-smoke
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image metadata smoke test (User, Entrypoint, Healthcheck, labels)
+        run: |
+          set -euo pipefail
+          CFG=$(docker image inspect openai-mcp-tunnel:ci-smoke)
+          echo "$CFG" | jq -e '.[0].Config.User == "10001:10001"' \
+            || { echo "FATAL: Config.User is not 10001:10001" >&2; exit 1; }
+          echo "$CFG" | jq -e '.[0].Config.Entrypoint == ["/entrypoint.sh"]' \
+            || { echo "FATAL: Entrypoint is not /entrypoint.sh" >&2; exit 1; }
+          echo "$CFG" | jq -e '.[0].Config.Healthcheck != null' \
+            || { echo "FATAL: no Healthcheck defined" >&2; exit 1; }
+          echo "$CFG" | jq -e '.[0].Config.Healthcheck.Test | join(" ") | contains("http://127.0.0.1:8080/healthz")' \
+            || { echo "FATAL: healthcheck does not target /healthz" >&2; exit 1; }
+          echo "$CFG" | jq -e '.[0].Config.Labels["org.opencontainers.image.source"] == "https://github.com/Dracoform/chatgpt-youtube-mcp"' \
+            || { echo "FATAL: OCI source label missing" >&2; exit 1; }
+          echo "$CFG" | jq -e '.[0].Config.Labels["org.opencontainers.image.licenses"] == "Apache-2.0"' \
+            || { echo "FATAL: OCI license label missing" >&2; exit 1; }
+          echo "image metadata smoke test passed"
+
+      - name: Runtime smoke test (no credentials, no OpenAI contact)
+        run: |
+          set -euo pipefail
+          # 1. missing configuration exits 78 and explains why
+          set +e
+          OUT=$(docker run --rm --read-only --cap-drop ALL \
+            --tmpfs /tmp:size=16m \
+            -e TUNNEL_CLIENT_BIN=/bin/true \
+            openai-mcp-tunnel:ci-smoke 2>&1)
+          RC=$?
+          set -e
+          [ "$RC" -eq 78 ] || { echo "FATAL: expected exit 78 for missing config, got $RC: $OUT" >&2; exit 1; }
+          echo "$OUT" | grep -q "CONTROL_PLANE_TUNNEL_ID" \
+            || { echo "FATAL: no clear config-error message" >&2; exit 1; }
+
+          # 2. valid config runs a stub client far enough to prove validation
+          #    passed, under read-only rootfs + cap-drop ALL. The stub is
+          #    created on the runner and bind-mounted so the real
+          #    tunnel-client (which would contact OpenAI) is never executed.
+          printf '%s\n' '#!/bin/sh' 'echo "STUB-RAN uid=$(id -u) argv=$*"' > /tmp/ci-stub-client
+          chmod +x /tmp/ci-stub-client
+          set +e
+          OUT=$(docker run --rm --read-only --cap-drop ALL \
+            --tmpfs /tmp:size=16m \
+            -v /tmp/ci-stub-client:/tmp/ci-stub-client:ro \
+            -e TUNNEL_CLIENT_BIN=/tmp/ci-stub-client \
+            -e CONTROL_PLANE_TUNNEL_ID=tunnel_0123456789abcdef0123456789abcdef \
+            -e CONTROL_PLANE_API_KEY=smoke-not-a-real-key \
+            -e MCP_SERVER_URL=http://youtube-mcp:8765/mcp \
+            -e NO_PROXY=youtube-mcp,localhost,127.0.0.1 \
+            openai-mcp-tunnel:ci-smoke 2>&1)
+          RC=$?
+          set -e
+          echo "$OUT" | grep -q "STUB-RAN uid=10001" \
+            || { echo "FATAL: hardened non-root run did not reach the stub: $OUT" >&2; exit 1; }
+          echo "$OUT" | grep -q "smoke-not-a-real-key" && {
+            echo "FATAL: secret leaked into runtime output" >&2; exit 1; } || true
+          echo "runtime smoke test passed (exit 78 path + hardened non-root start + stub exec)"
+
+      - name: Verify architecture resolution of the pinned multi-arch base
+        run: |
+          set -euo pipefail
+          cd docker/openai-mcp-tunnel
+          # shellcheck disable=SC1091
+          source versions.env
+          INSPECT=$(docker buildx imagetools inspect "ghcr.io/${UPSTREAM_REPO}@${TUNNEL_CLIENT_IMAGE_DIGEST}")
+          echo "$INSPECT" | grep -q 'linux/amd64' || { echo "FATAL: base index lacks linux/amd64" >&2; exit 1; }
+          echo "$INSPECT" | grep -q 'linux/arm64' || { echo "FATAL: base index lacks linux/arm64" >&2; exit 1; }
+          echo "pinned base resolves for linux/amd64 and linux/arm64"
+
+      - name: Build wrapper for both platforms (multi-arch resolution check, not loaded)
         uses: docker/build-push-action@v6
         with:
           context: docker/openai-mcp-tunnel
@@ -111,9 +218,9 @@ jobs:
           cache-to: type=gha,mode=max
 
   publish:
-    name: Publish wrapper image (manual only)
+    name: Publish wrapper image (manual only, main branch)
     needs: test
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -181,7 +288,7 @@ jobs:
             org.opencontainers.image.version=${{ inputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
           build-args: |
-            BASE_IMAGE=ghcr.io/${{ env.UPSTREAM_REPO }}@${{ needs.test.outputs.digest }}
+            BASE_IMAGE=ghcr.io/${{ env.UPSTREAM_REPO }}@${{ steps.pins.outputs.digest }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
