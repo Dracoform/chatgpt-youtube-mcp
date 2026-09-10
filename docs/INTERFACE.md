@@ -81,11 +81,17 @@ Representative codes: `invalid_video_reference`, `invalid_channel_reference`, `a
 
 ## Recommended model workflow
 
+Use the smallest transcript range that answers the user's question. Do not retrieve earlier portions of a long video merely to reach a later section.
+
 For "Schau dir dieses Video an und sag mir, was interessant ist":
 
-1. Call `get_video` for identity, description, chapters, and current metadata.
+1. Call `get_video` for identity, duration, description, chapters, and current metadata.
 2. Call `get_video_transcript` because the user's question concerns the video content, not just its description.
-3. Base substantive claims on transcript text; identify when only metadata/description was available.
-4. Mention automatic-caption uncertainty when `automatic=true`.
-5. Do not infer that a transcript is creator-approved merely because it exists.
+3. When the request identifies a specific section, timestamp, chapter, or relative portion such as "the last 30 minutes", use the video's duration/chapters to determine the relevant range and pass `start`/`end` to `get_video_transcript`.
+4. If `pagination.has_more` is `true` and more of the selected range is needed, continue with `pagination.next_continuation`. Do not restart transcript retrieval from the beginning.
+5. Base substantive claims on transcript text; identify when only metadata/description was available.
+6. Mention automatic-caption uncertainty when `automatic=true`.
+7. Do not infer that a transcript is creator-approved merely because it exists.
+
+Example: for a 3:52:14 video and a request about "the last 30 minutes", retrieve approximately `start: "03:22:14", end: "03:52:14"` rather than paging through the transcript from `00:00`.
 
