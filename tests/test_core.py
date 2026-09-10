@@ -11,8 +11,11 @@ from youtube_mcp.core import (
     Settings,
     YouTubeBridgeError,
     YouTubeService,
+    decode_continuation,
+    encode_continuation,
     parse_channel_reference,
     parse_json3_transcript,
+    parse_timestamp,
     parse_video_id,
 )
 
@@ -201,6 +204,204 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(result["automatic"])
         candidates = YouTubeService._track_candidates(info, ["de"])
         self.assertIn(("de-orig", True), [(lang, auto) for lang, auto, _ in candidates])
+
+    def _service_transcript(self):
+        info = self.YTDLP_INFO_DE_ORIG
+
+        def fake_run(command, capture_output, text, timeout, check):
+            return subprocess.CompletedProcess(command, 0, json.dumps(info), "")
+
+        def fake_urlopen(request, timeout=0):
+            return Response(self.JSON3_SEGMENTS)
+
+        return YouTubeService(Settings(), urlopen=fake_urlopen, run=fake_run)
+
+    def test_parse_timestamp_formats(self):
+        cases = {
+            "1": 1.0,
+            "01": 1.0,
+            "1:02": 62.0,
+            "1:02.5": 62.5,
+            "1:02:03": 3723.0,
+            "1:02:03.5": 3723.5,
+            "12.25": 12.25,
+            "  2.5  ": 2.5,
+        }
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(parse_timestamp(value), expected)
+        self.assertEqual(parse_timestamp(2.5), 2.5)
+        self.assertEqual(parse_timestamp(3), 3.0)
+
+    def test_parse_timestamp_rejects_invalid_values(self):
+        invalid = ["", "1:", ":02", "1:2:3:4", "-1", "-1:02", "abc", "1:60", "01:02:03:04"]
+        for value in invalid:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(YouTubeBridgeError, "invalid_timestamp"):
+                    parse_timestamp(value)
+        with self.assertRaisesRegex(YouTubeBridgeError, "invalid_timestamp"):
+            parse_timestamp(-1)
+
+    def test_transcript_range_filters_segments_by_start_and_end(self):
+        service = self._service_transcript()
+        result = service.get_video_transcript(
+            "dQw4w9WgXcQ", start="1", end="3", include_timestamps=False, max_chars=100,
+        )
+        self.assertEqual(result["transcript"], "Welt")
+        self.assertEqual(result["segment_count"], 1)
+        self.assertEqual(result["pagination"]["returned_segments"], 1)
+        self.assertEqual(result["pagination"]["total_segments"], 1)
+        self.assertEqual(result["pagination"]["range_start"], 1.0)
+        self.assertEqual(result["pagination"]["range_end"], 3.0)
+
+    def test_transcript_pagination_continues_without_repeating_content(self):
+        service = self._service_transcript()
+        first = service.get_video_transcript(
+            "dQw4w9WgXcQ", start="0", end="5", include_timestamps=False, max_chars=7,
+        )
+        self.assertEqual(first["transcript"], "Hallo")
+        self.assertTrue(first["pagination"]["has_more"])
+        self.assertEqual(first["pagination"]["next_start"], 2.0)
+        self.assertEqual(first["pagination"]["returned_segments"], 1)
+        self.assertEqual(first["pagination"]["total_segments"], 2)
+
+        second = service.get_video_transcript(
+            "dQw4w9WgXcQ", start=first["pagination"]["next_start"], end="5",
+            include_timestamps=False, max_chars=100,
+        )
+        self.assertEqual(second["transcript"], "Welt")
+        self.assertFalse(second["pagination"]["has_more"])
+        self.assertIsNone(second["pagination"]["next_start"])
+        self.assertEqual(second["pagination"]["returned_segments"], 1)
+
+    def test_transcript_oversized_first_segment_terminates_pagination(self):
+        # A segment longer than max_chars must not trap a paginating client:
+        # the page returns the hard-truncated segment, consumes it, and the
+        # next call advances until has_more turns false.
+        json3 = (
+            b'{"events": ['
+            b'{"tStartMs": 0, "dDurationMs": 2000, "segs": [{"utf8": "Aaaa"}]}, '
+            b'{"tStartMs": 2000, "dDurationMs": 2000, "segs": [{"utf8": "Bbbb"}]}'
+            b']}'
+        )
+
+        info = self.YTDLP_INFO_DE_ORIG
+
+        def fake_run(command, capture_output, text, timeout, check):
+            return subprocess.CompletedProcess(command, 0, json.dumps(info), "")
+
+        def fake_urlopen(request, timeout=0):
+            return Response(json3)
+
+        service = YouTubeService(Settings(), urlopen=fake_urlopen, run=fake_run)
+        transcript_parts = []
+        continuation = None
+        pages = 0
+        while True:
+            result = service.get_video_transcript(
+                "dQw4w9WgXcQ", languages=["de"], include_timestamps=False,
+                max_chars=2, continuation=continuation,
+            )
+            pages += 1
+            pagination = result["pagination"]
+            transcript_parts.append(result["transcript"])
+            self.assertLess(pages, 5, "pagination must terminate on a 2-segment fixture")
+            if not pagination["has_more"]:
+                break
+            self.assertIsNotNone(pagination["next_start"])
+            self.assertIsNotNone(pagination["next_continuation"])
+            continuation = pagination["next_continuation"]
+        self.assertEqual(pages, 2)
+        self.assertEqual(transcript_parts[0], "Aa")
+        self.assertEqual(transcript_parts[1], "Bb")
+
+    def test_transcript_oversized_last_segment_does_not_claim_more(self):
+        # When only an oversized segment remains in the selected range, that
+        # hard-truncated page is the final one: has_more must be false and no
+        # next_start/next_continuation may be offered.
+        json3 = (
+            b'{"events": ['
+            b'{"tStartMs": 0, "dDurationMs": 2000, "segs": [{"utf8": "Aaaa"}]}, '
+            b'{"tStartMs": 2000, "dDurationMs": 2000, "segs": [{"utf8": "Bbbb"}]}'
+            b']}'
+        )
+
+        info = self.YTDLP_INFO_DE_ORIG
+
+        def fake_run(command, capture_output, text, timeout, check):
+            return subprocess.CompletedProcess(command, 0, json.dumps(info), "")
+
+        def fake_urlopen(request, timeout=0):
+            return Response(json3)
+
+        service = YouTubeService(Settings(), urlopen=fake_urlopen, run=fake_run)
+        first = service.get_video_transcript(
+            "dQw4w9WgXcQ", languages=["de"], include_timestamps=False, max_chars=2, start="2",
+        )
+        self.assertEqual(first["transcript"], "Bb")
+        self.assertFalse(first["pagination"]["has_more"])
+        self.assertIsNone(first["pagination"]["next_start"])
+        self.assertIsNone(first["pagination"]["next_continuation"])
+
+    def test_transcript_continuation_round_trip_and_override(self):
+        service = self._service_transcript()
+        first = service.get_video_transcript(
+            "dQw4w9WgXcQ", start="0", end="5", include_timestamps=False, max_chars=7,
+        )
+        continuation = first["pagination"]["next_continuation"]
+        self.assertIsNotNone(continuation)
+        decoded = decode_continuation(continuation)
+        self.assertEqual(decoded, {"start_seconds": 2.0, "end_seconds": 5.0})
+
+        second = service.get_video_transcript(
+            "dQw4w9WgXcQ", start="0", end="2", continuation=continuation,
+            include_timestamps=False, max_chars=100,
+        )
+        self.assertEqual(second["transcript"], "Welt")
+        self.assertEqual(second["pagination"]["range_start"], 2.0)
+        self.assertEqual(second["pagination"]["range_end"], 5.0)
+
+    def test_transcript_invalid_continuation_and_time_range(self):
+        service = self._service_transcript()
+        with self.assertRaisesRegex(YouTubeBridgeError, "invalid_continuation"):
+            service.get_video_transcript("dQw4w9WgXcQ", continuation="not-a-token")
+        with self.assertRaisesRegex(YouTubeBridgeError, "invalid_time_range"):
+            service.get_video_transcript("dQw4w9WgXcQ", start="2", end="1")
+
+    def test_transcript_hard_max_chars_is_clamped(self):
+        previous_max = os.environ.get("YOUTUBE_TRANSCRIPT_MAX_CHARS")
+        previous_hard = os.environ.get("YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS")
+        try:
+            os.environ["YOUTUBE_TRANSCRIPT_MAX_CHARS"] = "200000"
+            os.environ["YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS"] = "120000"
+            settings = Settings.from_env()
+            self.assertEqual(settings.transcript_max_chars, 120_000)
+            self.assertEqual(settings.transcript_hard_max_chars, 120_000)
+        finally:
+            if previous_max is None:
+                os.environ.pop("YOUTUBE_TRANSCRIPT_MAX_CHARS", None)
+            else:
+                os.environ["YOUTUBE_TRANSCRIPT_MAX_CHARS"] = previous_max
+            if previous_hard is None:
+                os.environ.pop("YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS", None)
+            else:
+                os.environ["YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS"] = previous_hard
+
+    def test_transcript_no_args_remains_backward_compatible(self):
+        service = self._service_transcript()
+        result = service.get_video_transcript("dQw4w9WgXcQ", include_timestamps=False, max_chars=100)
+        self.assertEqual(result["transcript"], "Hallo\nWelt")
+        self.assertFalse(result["truncated"])
+        self.assertEqual(result["segment_count"], 2)
+        self.assertEqual(result["max_chars"], 100)
+        pagination = result["pagination"]
+        self.assertFalse(pagination["has_more"])
+        self.assertIsNone(pagination["next_start"])
+        self.assertIsNone(pagination["next_continuation"])
+        self.assertEqual(pagination["returned_segments"], 2)
+        self.assertEqual(pagination["total_segments"], 2)
+        self.assertEqual(pagination["returned_chars"], len("Hallo\nWelt"))
+        self.assertEqual(pagination["total_chars"], len("Hallo\nWelt"))
 
     def test_default_languages_from_environment(self):
         previous = os.environ.get("YOUTUBE_DEFAULT_LANGUAGES")

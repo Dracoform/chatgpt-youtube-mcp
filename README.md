@@ -56,7 +56,7 @@ For a guided Portainer Web Editor stack, use the hosted web generator at **https
 - There are no post, comment, subscribe, delete, upload, or account-modification tools.
 - API keys remain server-side environment variables and are never returned.
 - Arbitrary URLs are rejected; only recognized YouTube URL shapes are accepted.
-- Tool output and transcript size are bounded.
+- Tool output and transcript size are bounded (`YOUTUBE_TRANSCRIPT_MAX_CHARS`, default 60000, hard-capped by `YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS`, default 120000). Long transcripts are paginated: `get_video_transcript` accepts `start`/`end` (seconds, "MM:SS", "HH:MM:SS") and returns `pagination.has_more` / `next_continuation` so a client can continue through the transcript without receiving repeated content.
 
 ## Deliberate PoC limits
 

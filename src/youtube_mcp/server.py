@@ -76,14 +76,30 @@ def get_video_transcript(
     languages: list[str] | None = None,
     include_timestamps: bool = True,
     max_chars: int | None = None,
+    start: float | str | None = None,
+    end: float | str | None = None,
+    continuation: str | None = None,
 ) -> dict[str, Any]:
-    """Get a caption-based transcript. Prefer requested languages in order; manual captions win over automatic captions."""
+    """Get a caption-based transcript. Prefer requested languages in order; manual captions win over automatic captions.
+
+    Ranges: `start`/`end` (seconds, "MM:SS" or "HH:MM:SS") select segments
+    whose start lies in [start, end). For long transcripts, pass `continuation`
+    from a previous response's `pagination.next_continuation` (it overrides
+    start/end) to fetch the next page. The response's `pagination` object
+    reports `has_more`, `next_start`, `next_continuation`, returned/total
+    segments and chars, and the effective range; when `pagination.has_more`
+    is true, call again with `start=next_start` or `continuation=next_continuation`.
+    Server caps `max_chars` at YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS (default 120000).
+    """
     return _call(
         "get_video_transcript",
         video,
         languages=languages,
         include_timestamps=include_timestamps,
         max_chars=max_chars,
+        start=start,
+        end=end,
+        continuation=continuation,
     )
 
 
