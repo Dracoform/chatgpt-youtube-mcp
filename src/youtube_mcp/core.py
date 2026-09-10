@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import html
 import json
+import math
 import os
 import re
 import subprocess
@@ -42,14 +45,21 @@ class Settings:
     enable_ytdlp: bool = True
     transcript_max_chars: int = 60_000
     default_languages: tuple[str, ...] = ("de", "en")
+    transcript_hard_max_chars: int = 120_000
 
     @classmethod
     def from_env(cls) -> "Settings":
         raw_enabled = os.getenv("YOUTUBE_ENABLE_YTDLP", "true").strip().lower()
+        transcript_max_chars = int(os.getenv("YOUTUBE_TRANSCRIPT_MAX_CHARS", "60000"))
+        transcript_hard_max_chars = max(
+            int(os.getenv("YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS", "120000")),
+            1_000,
+        )
         return cls(
             api_key=os.getenv("YOUTUBE_API_KEY") or None,
             enable_ytdlp=raw_enabled in {"1", "true", "yes", "on"},
-            transcript_max_chars=int(os.getenv("YOUTUBE_TRANSCRIPT_MAX_CHARS", "60000")),
+            transcript_max_chars=min(transcript_max_chars, transcript_hard_max_chars),
+            transcript_hard_max_chars=transcript_hard_max_chars,
             default_languages=tuple(
                 language.strip()
                 for language in os.getenv("YOUTUBE_DEFAULT_LANGUAGES", "de,en").split(",")
@@ -115,6 +125,100 @@ def _seconds_to_timestamp(seconds: float) -> str:
     hours, remainder = divmod(total, 3600)
     minutes, secs = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+_TIMESTAMP_PART = r"[0-9]{1,2}"
+_TIMESTAMP_RE = re.compile(
+    rf"^(?P<hours>{_TIMESTAMP_PART}):(?P<minutes>{_TIMESTAMP_PART}):"
+    rf"(?P<seconds>{_TIMESTAMP_PART})(?:\.(?P<fraction>[0-9]+))?$|"
+    rf"^(?P<minutes_only>{_TIMESTAMP_PART}):"
+    rf"(?P<seconds_only>{_TIMESTAMP_PART})(?:\.(?P<fraction_only>[0-9]+))?$"
+)
+
+
+def parse_timestamp(value: float | int | str) -> float:
+    """Parse a non-negative transcript timestamp expressed in seconds."""
+    if isinstance(value, bool):
+        raise YouTubeBridgeError("invalid_timestamp", f"invalid_timestamp: {value!r}")
+
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            raise YouTubeBridgeError("invalid_timestamp", f"invalid_timestamp: {value!r}")
+        try:
+            if ":" not in candidate:
+                seconds = float(candidate)
+            else:
+                match = _TIMESTAMP_RE.fullmatch(candidate)
+                if not match:
+                    raise ValueError
+                groups = match.groupdict()
+                hours = int(groups["hours"] or 0)
+                minutes = int(groups["minutes"] or groups["minutes_only"])
+                seconds_part = groups["seconds"] or groups["seconds_only"]
+                fraction = groups["fraction"] or groups["fraction_only"] or ""
+                seconds = hours * 3600 + minutes * 60 + float(f"{seconds_part}.{fraction}" if fraction else seconds_part)
+                if minutes > 59 or float(seconds_part) > 59:
+                    raise ValueError
+        except ValueError as exc:
+            raise YouTubeBridgeError("invalid_timestamp", f"invalid_timestamp: {value!r}") from exc
+    elif isinstance(value, (int, float)):
+        seconds = float(value)
+    else:
+        raise YouTubeBridgeError("invalid_timestamp", f"invalid_timestamp: {value!r}")
+
+    if not math.isfinite(seconds) or seconds < 0:
+        raise YouTubeBridgeError("invalid_timestamp", f"invalid_timestamp: {value!r}")
+    return seconds
+
+
+_CONTINUATION_PREFIX = "tr1."
+
+
+def encode_continuation(start_seconds: float, end_seconds: float | None) -> str:
+    """Encode an opaque transcript range token."""
+    payload = {
+        "v": 1,
+        "s": float(start_seconds),
+        "e": None if end_seconds is None else float(end_seconds),
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    return _CONTINUATION_PREFIX + encoded
+
+
+def decode_continuation(token: str) -> dict[str, float | None]:
+    """Decode and validate a transcript range token."""
+    try:
+        if not isinstance(token, str) or not token.startswith(_CONTINUATION_PREFIX):
+            raise ValueError
+        encoded = token[len(_CONTINUATION_PREFIX):]
+        padding = "=" * (-len(encoded) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(encoded + padding).decode("utf-8"))
+        if (
+            not isinstance(payload, dict)
+            or payload.get("v") != 1
+            or set(payload) != {"v", "s", "e"}
+            or isinstance(payload["s"], bool)
+            or isinstance(payload["e"], bool)
+            or not isinstance(payload["s"], (int, float))
+            or payload["e"] is not None and not isinstance(payload["e"], (int, float))
+        ):
+            raise ValueError
+        start_seconds = float(payload["s"])
+        end_seconds = None if payload["e"] is None else float(payload["e"])
+        if (
+            not math.isfinite(start_seconds)
+            or start_seconds < 0
+            or end_seconds is not None
+            and (not math.isfinite(end_seconds) or end_seconds < 0)
+        ):
+            raise ValueError
+    except (ValueError, TypeError, UnicodeError, json.JSONDecodeError, binascii.Error) as exc:
+        raise YouTubeBridgeError("invalid_continuation", "invalid_continuation: malformed transcript token") from exc
+
+    return {"start_seconds": start_seconds, "end_seconds": end_seconds}
 
 
 def parse_json3_transcript(data: bytes) -> list[dict[str, Any]]:
@@ -321,8 +425,23 @@ class YouTubeService:
         languages: list[str] | None = None,
         include_timestamps: bool = True,
         max_chars: int | None = None,
+        start: float | str | None = None,
+        end: float | str | None = None,
+        continuation: str | None = None,
     ) -> dict[str, Any]:
         video_id = parse_video_id(reference)
+
+        if continuation is not None:
+            decoded_continuation = decode_continuation(continuation)
+            range_start = decoded_continuation["start_seconds"]
+            range_end = decoded_continuation["end_seconds"]
+        else:
+            range_start = None if start is None else parse_timestamp(start)
+            range_end = None if end is None else parse_timestamp(end)
+
+        if range_start is not None and range_end is not None and range_start >= range_end:
+            raise YouTubeBridgeError("invalid_time_range", "invalid_time_range: transcript start must be before end")
+
         preferred = [lang.strip() for lang in (languages or list(self.settings.default_languages)) if lang.strip()]
         info = self._get_video_info(video_id)
         candidates = self._track_candidates(info, preferred)
@@ -343,24 +462,85 @@ class YouTubeService:
             if last_error:
                 raise YouTubeBridgeError("transcript_fetch_failed", f"Caption tracks were listed but could not be retrieved: {last_error}", retryable=True) from last_error
             raise YouTubeBridgeError("transcript_empty", "Caption tracks were available but contained no transcript text.")
-        lines = []
-        for segment in segments:
-            prefix = f"[{_seconds_to_timestamp(segment['start_seconds'])}] " if include_timestamps else ""
-            lines.append(prefix + segment["text"])
-        transcript = "\n".join(lines)
-        limit = min(max_chars or self.settings.transcript_max_chars, self.settings.transcript_max_chars)
-        truncated = len(transcript) > limit
-        if truncated:
-            transcript = transcript[:limit].rsplit("\n", 1)[0]
+
+        filtered_segments = [
+            segment
+            for segment in segments
+            if (
+                range_start is None
+                or float(segment["start_seconds"]) >= range_start - 1e-6
+            )
+            and (
+                range_end is None
+                or float(segment["start_seconds"]) < range_end
+            )
+        ]
+        lines = [
+            (f"[{_seconds_to_timestamp(segment['start_seconds'])}] " if include_timestamps else "")
+            + segment["text"]
+            for segment in filtered_segments
+        ]
+        full_transcript = "\n".join(lines)
+        limit = min(max_chars or self.settings.transcript_max_chars, self.settings.transcript_hard_max_chars)
+
+        transcript_parts: list[str] = []
+        returned_segments = 0
+        oversized_first = False
+        for line in lines:
+            candidate = "\n".join(transcript_parts + [line])
+            if len(candidate) > limit:
+                break
+            transcript_parts.append(line)
+            returned_segments += 1
+        transcript = "\n".join(transcript_parts)
+        if not transcript_parts and lines:
+            # A single segment longer than the limit would otherwise trap a
+            # paginating client on an empty page that never advances. Return
+            # that segment hard-truncated, count it as returned, and treat it
+            # as consumed so the next page starts after it.
+            transcript = lines[0][:limit]
+            returned_segments = 1
+            oversized_first = True
+
+        total_segments = len(filtered_segments)
+        total_chars = len(full_transcript)
+        returned_chars = len(transcript)
+        truncated = total_chars > returned_chars
+        first_omitted = None
+        if returned_segments < total_segments:
+            first_omitted = filtered_segments[returned_segments]
+        elif oversized_first:
+            # The hard-truncated segment itself was returned and consumed; it
+            # has no follow-up page inside the selected range.
+            first_omitted = None
+            truncated = False
+        has_more = first_omitted is not None
+        next_start = None
+        next_continuation = None
+        if first_omitted is not None:
+            next_start = float(first_omitted["start_seconds"])
+            next_continuation = encode_continuation(next_start, range_end)
+
         return {
             "ok": True,
             "video": {"video_id": video_id, "title": info.get("title"), "channel": info.get("channel") or info.get("uploader")},
             "language": language,
             "automatic": automatic,
             "transcript": transcript,
-            "segment_count": len(segments),
+            "segment_count": returned_segments,
             "truncated": truncated,
             "max_chars": limit,
+            "pagination": {
+                "has_more": has_more,
+                "next_start": next_start,
+                "next_continuation": next_continuation,
+                "returned_segments": returned_segments,
+                "total_segments": total_segments,
+                "returned_chars": returned_chars,
+                "total_chars": total_chars,
+                "range_start": range_start,
+                "range_end": range_end,
+            },
             "provenance": provenance("yt_dlp_youtube_caption_endpoint", official=False, note="Unofficial fallback; availability can change or be rate-limited."),
         }
 

@@ -29,11 +29,22 @@ Input:
   "video":"VIDEO_ID",
   "languages":["de","en"],
   "include_timestamps":true,
-  "max_chars":40000
+  "max_chars":40000,
+  "start":null,
+  "end":null,
+  "continuation":null
 }
 ```
 
-Language order is a preference. The bridge tries preferred manual/automatic tracks, original automatic tracks, then other available tracks. Server policy caps `max_chars` even if a larger value is requested. Returns selected language, whether it is automatic, transcript text, segment count, and truncation state.
+Language order is a preference. The bridge tries preferred manual/automatic tracks, original automatic tracks, then other available tracks. Server policy caps `max_chars` even if a larger value is requested (hard cap: `YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS`, default 120000; default page size `YOUTUBE_TRANSCRIPT_MAX_CHARS`, default 60000). Returns selected language, whether it is automatic, transcript text, segment count, truncation state, and a `pagination` object.
+
+#### Ranges and pagination
+
+- `start`/`end` select segments whose start lies in `[start, end)` (half-open; `end` is exclusive). Accepted forms: seconds (`90`, `"90.5"`), `"MM:SS"`, `"HH:MM:SS"` (fractional seconds allowed, e.g. `"1:02.5"`).
+- Truncation always breaks at a segment boundary. The `pagination` object reports: `has_more`, `next_start` (seconds; start for the next call), `next_continuation` (opaque token), `returned_segments`/`total_segments`, `returned_chars`/`total_chars` (chars of the selected range), `range_start`/`range_end`.
+- To page through a long transcript, repeat the call with `start: <pagination.next_start>` (or simply pass `continuation: <pagination.next_continuation>`, which overrides `start`/`end`) until `pagination.has_more` is `false`. No content is repeated between pages; pages are line-aligned, so the full range text is `"\n".join(page.transcript for each page)` and `returned_chars + <number of page breaks>` equals `total_chars`.
+- New error codes: `invalid_timestamp`, `invalid_time_range`, `invalid_continuation`.
+- Backward compatibility: omitting the new parameters behaves exactly as before; `segment_count` now counts the segments actually returned; a new `pagination` object is always present.
 
 ### `get_channel`
 
