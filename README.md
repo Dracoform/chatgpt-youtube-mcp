@@ -1,6 +1,10 @@
-# YouTube Current Data MCP
+# YouTube MCP for ChatGPT
 
-Read-only MCP bridge for current YouTube metadata, captions, channels, recent uploads, and search. It is deliberately a small proof of concept for the path:
+**Give ChatGPT direct, structured access to YouTube videos — including long videos and specific time ranges that are otherwise difficult to inspect reliably.**
+
+Ask about the last 30 minutes of a four-hour video, retrieve only a relevant chapter instead of consuming the transcript from the beginning, or continue through long transcripts page by page. Transcript retrieval supports bounded `start`/`end` ranges and continuation-based pagination, so ChatGPT can request the part it actually needs rather than wasting context on everything that came before it.
+
+Under the hood, this is a read-only MCP bridge for current YouTube metadata, captions, channels, recent uploads, and search. It is deliberately a small proof of concept for the path:
 
 `ChatGPT -> MCP -> YouTube -> structured data -> ChatGPT`
 
@@ -52,14 +56,14 @@ For a guided Portainer Web Editor stack, use the hosted web generator at **https
 
 ## Security boundary
 
-- Every MCP tool is annotated read-only and idempotent.
-- There are no post, comment, subscribe, delete, upload, or account-modification tools.
-- API keys remain server-side environment variables and are never returned.
-- Arbitrary URLs are rejected; only recognized YouTube URL shapes are accepted.
-- Tool output and transcript size are bounded (`YOUTUBE_TRANSCRIPT_MAX_CHARS`, default 60000, hard-capped by `YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS`, default 120000). Long transcripts are paginated: `get_video_transcript` accepts `start`/`end` (seconds, "MM:SS", "HH:MM:SS") and returns `pagination.has_more` / `next_continuation` so a client can continue through the transcript without receiving repeated content.
+* Every MCP tool is annotated read-only and idempotent.
+* There are no post, comment, subscribe, delete, upload, or account-modification tools.
+* API keys remain server-side environment variables and are never returned.
+* Arbitrary URLs are rejected; only recognized YouTube URL shapes are accepted.
+* Tool output and transcript size are bounded (`YOUTUBE_TRANSCRIPT_MAX_CHARS`, default 60000, hard-capped by `YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS`, default 120000). Long transcripts are paginated: `get_video_transcript` accepts `start`/`end` (seconds, "MM:SS", "HH:MM:SS") and returns `pagination.has_more` / `next_continuation` so a client can continue through the transcript without receiving repeated content.
 
 ## Deliberate PoC limits
 
-- Google OAuth for personal subscriptions is not included in v0.1. It needs a real per-user authorization broker, not a token pasted into the model.
-- Transcript retrieval for third-party videos is necessarily unofficial. YouTube Data API v3 only permits caption download when the caller can edit the video.
-- A public plugin submission needs a stable public HTTPS deployment. Developer-mode testing can use OpenAI Secure MCP Tunnel instead.
+* Google OAuth for personal subscriptions is not included in v0.1. It needs a real per-user authorization broker, not a token pasted into the model.
+* Transcript retrieval for third-party videos is necessarily unofficial. YouTube Data API v3 only permits caption download when the caller can edit the video.
+* A public plugin submission needs a stable public HTTPS deployment. Developer-mode testing can use OpenAI Secure MCP Tunnel instead.
