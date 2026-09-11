@@ -148,7 +148,20 @@ Official mode accepts YouTube's supported order values. Limit is clamped to 1..2
 }
 ```
 
-Representative codes: `invalid_video_reference`, `invalid_channel_reference`, `invalid_playlist_reference`, `playlist_not_found`, `video_not_in_playlist`, `api_key_required`, `video_not_found`, `channel_not_found`, `transcript_unavailable`, `transcript_fetch_failed`, `upstream_request_failed`, `ytdlp_failed`, and `unofficial_fallback_disabled`.
+Representative codes: `invalid_video_reference`, `invalid_channel_reference`, `invalid_playlist_reference`, `playlist_not_found`, `video_not_in_playlist`, `api_key_required`, `video_not_found`, `channel_not_found`, `transcript_unavailable`, `transcript_empty`, `transcript_fetch_failed`, `upstream_request_failed`, `ytdlp_failed`, `ytdlp_timeout`, `ytdlp_invalid_output`, `sign_in_required`, `rate_limited`, and `unofficial_fallback_disabled`.
+
+#### Failure vs. absence
+
+A **retrieval/extraction failure is never reported as evidence that captions do not exist.** `transcript_unavailable` is raised only after a *successful* extraction found no caption tracks. If extraction itself failed, the bridge returns one of the classified errors below instead, so a broken yt-dlp or a YouTube-side outage can never look like a video that simply has no captions:
+
+- `ytdlp_failed` — yt-dlp ran but failed (default, retryable). The `message` carries the last stderr line from yt-dlp.
+- `ytdlp_timeout` — yt-dlp did not finish within its 90-second timeout (retryable).
+- `ytdlp_invalid_output` — yt-dlp exited zero but produced JSON that is malformed, missing the expected `id`, or not an object; the result cannot be trusted as an absence signal (retryable).
+- `sign_in_required` — yt-dlp hit a sign-in/bot-confirmation wall (not retryable; the condition is permanent until an operator intervenes).
+- `rate_limited` — yt-dlp reported HTTP 429/too-many-requests (retryable).
+- `transcript_fetch_failed` — caption tracks were listed but every download failed; when the underlying failure is itself one of the classified codes (e.g. `upstream_request_failed` from a network error), that original code and retryability are preserved rather than collapsed.
+
+Within `get_video_transcript`, demanding a time range that contains no segments returns `ok: true` with a valid `transcript_unavailable`-free empty result (`segment_count: 0`, empty transcript) — that is a *range-empty* condition, not an extraction failure.
 
 ## Recommended model workflow
 

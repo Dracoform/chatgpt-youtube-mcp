@@ -373,19 +373,98 @@ class YouTubeService:
         if playlist_end is not None:
             command += ["--playlist-end", str(playlist_end)]
         command.append(target)
-        completed = self._run(command, capture_output=True, text=True, timeout=90, check=False)
+        try:
+            completed = self._run(command, capture_output=True, text=True, timeout=90, check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise YouTubeBridgeError("ytdlp_timeout", "yt-dlp timed out while extracting.", retryable=True) from exc
+        except Exception as exc:
+            raise YouTubeBridgeError("ytdlp_failed", f"yt-dlp execution failed: {exc}", retryable=True) from exc
         if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "yt-dlp failed").strip().splitlines()[-1]
-            raise YouTubeBridgeError("ytdlp_failed", detail, retryable=True)
-        return json.loads(completed.stdout)
+            combined = (completed.stderr or completed.stdout or "").strip()
+            lines = combined.splitlines()
+            detail = lines[-1] if lines else "yt-dlp failed"
+            code, retryable = self._classify_ytdlp_failure(combined)
+            raise YouTubeBridgeError(code, detail, retryable=retryable)
+        try:
+            payload = json.loads(completed.stdout)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise YouTubeBridgeError("ytdlp_invalid_output", "yt-dlp returned no valid JSON; the extraction result cannot be trusted.", retryable=True) from exc
+        if not isinstance(payload, dict):
+            raise YouTubeBridgeError("ytdlp_invalid_output", "yt-dlp returned a non-object result; the extraction result cannot be trusted.", retryable=True)
+        return payload
+
+    @staticmethod
+    def _classify_ytdlp_failure(stderr: str) -> tuple[str, bool]:
+        """Classify a yt-dlp failure into a stable error code and retryability.
+
+        The retryable flag is honest about transience: rate limiting and
+        network-type conditions are retryable; permanent conditions such as
+        a sign-in/bot wall are not, so consumers do not retry in vain. The
+        classification never returns a caption-absence result — every return
+        is an explicit failure code.
+        """
+        text = (stderr or "").lower()
+        if "sign in to confirm" in text or "sign in to verify" in text or "confirm you are not a robot" in text:
+            return "sign_in_required", False
+        if "http error 429" in text or "too many requests" in text or "rate limit" in text:
+            return "rate_limited", True
+        return "ytdlp_failed", True
 
     def _get_video_info(self, video_id: str) -> dict[str, Any]:
         cached = self._video_info_cache.get(video_id)
         if cached and time.monotonic() - cached[0] < 300:
             return cached[1]
         info = self._yt_dlp_json(f"https://www.youtube.com/watch?v={video_id}")
+        # Validate the extraction BEFORE caching or reporting absence. A
+        # degraded exit-zero result (e.g. missing id) is a retrieval failure,
+        # not evidence that captions do not exist, so it must not be cached
+        # and must not be surfaced as transcript_unavailable downstream.
+        if not isinstance(info, dict) or not info.get("id"):
+            raise YouTubeBridgeError(
+                "ytdlp_invalid_output",
+                "yt-dlp returned incomplete video information; captions cannot be determined reliably.",
+                retryable=True,
+            )
         self._video_info_cache[video_id] = (time.monotonic(), info)
         return info
+
+    def _fetch_transcript_segments(self, candidates: list[tuple[str, bool, dict[str, Any]]]) -> tuple[list[dict[str, Any]], str, bool]:
+        """Retrieve the first usable caption track, preserving failure causes.
+
+        Returns (segments, language, automatic) for the first candidate that
+        yields transcript text. When every candidate fails to retrieve, the
+        underlying failure is re-raised with its original classification and
+        cause preserved — a retrieval failure is never reported as caption
+        absence. A genuinely empty parse (all tracks returned zero segments
+        without error) returns an empty segment list so the caller can raise
+        ``transcript_empty`` explicitly.
+        """
+        last_error: Exception | None = None
+        last_track = ""
+        for language, automatic, track in candidates:
+            try:
+                segments = parse_json3_transcript(self._get_bytes(track["url"], timeout=60))
+            except Exception as exc:  # noqa: BLE001 - wrapping to classify
+                last_error = exc
+                last_track = track.get("url", "")
+                continue
+            if segments:
+                return segments, language, automatic
+        if last_error is not None:
+            if isinstance(last_error, YouTubeBridgeError):
+                # Preserve the original classification (e.g. upstream_request_failed
+                # for a network error) and its retryability, not just the message.
+                raise YouTubeBridgeError(
+                    last_error.code,
+                    f"Caption track retrieval failed: {last_error}",
+                    retryable=last_error.retryable,
+                ) from last_error
+            raise YouTubeBridgeError(
+                "transcript_fetch_failed",
+                f"Caption tracks were listed but could not be retrieved: {last_error} (track: {last_track})",
+                retryable=True,
+            ) from last_error
+        return [], "", False
 
     @staticmethod
     def _video_from_api(item: dict[str, Any]) -> dict[str, Any]:
@@ -537,20 +616,8 @@ class YouTubeService:
         candidates = self._track_candidates(info, preferred)
         if not candidates:
             raise YouTubeBridgeError("transcript_unavailable", "No manual or automatic captions are available for this video.")
-        last_error: Exception | None = None
-        language = ""
-        automatic = False
-        segments: list[dict[str, Any]] = []
-        for language, automatic, track in candidates:
-            try:
-                segments = parse_json3_transcript(self._get_bytes(track["url"], timeout=60))
-                if segments:
-                    break
-            except Exception as exc:
-                last_error = exc
+        segments, language, automatic = self._fetch_transcript_segments(candidates)
         if not segments:
-            if last_error:
-                raise YouTubeBridgeError("transcript_fetch_failed", f"Caption tracks were listed but could not be retrieved: {last_error}", retryable=True) from last_error
             raise YouTubeBridgeError("transcript_empty", "Caption tracks were available but contained no transcript text.")
 
         filtered_segments = [
@@ -702,20 +769,8 @@ class YouTubeService:
         candidates = self._track_candidates(info, preferred)
         if not candidates:
             raise YouTubeBridgeError("transcript_unavailable", "transcript_unavailable: No manual or automatic captions are available for this video.")
-        last_error: Exception | None = None
-        language = ""
-        automatic = False
-        segments: list[dict[str, Any]] = []
-        for language, automatic, track in candidates:
-            try:
-                segments = parse_json3_transcript(self._get_bytes(track["url"], timeout=60))
-                if segments:
-                    break
-            except Exception as exc:
-                last_error = exc
+        segments, language, automatic = self._fetch_transcript_segments(candidates)
         if not segments:
-            if last_error:
-                raise YouTubeBridgeError("transcript_fetch_failed", f"Caption tracks were listed but could not be retrieved: {last_error}", retryable=True) from last_error
             raise YouTubeBridgeError("transcript_empty", "transcript_empty: Caption tracks were available but contained no transcript text.")
 
         normalized_segments = [normalize_search_text(segment["text"]) for segment in segments]
