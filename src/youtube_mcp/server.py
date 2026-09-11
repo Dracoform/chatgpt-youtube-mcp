@@ -160,6 +160,44 @@ def search_videos(query: str, limit: int = 10, order: str = "relevance") -> dict
     return _call("search_videos", query, limit=limit, order=order)
 
 
+@mcp.tool(annotations=READ_ONLY)
+def get_playlist(playlist: str) -> dict[str, Any]:
+    """Get playlist metadata and its ordered videos (1-based positions from enumeration).
+
+    Accepts a playlist ID (PL..., UU..., RD..., OL...), a
+    youtube.com/playlist?list=... URL, or a YouTube watch/shorts/embed URL
+    that carries list= playlist context. For a watch URL with list=
+    context, the response also reports the video ID from the URL and the
+    URL's `index` parameter as CONTEXT ONLY (url_index_context); the
+    authoritative position of any video comes from this enumeration, never
+    from the URL index. A bare video URL without list= context is rejected:
+    playlist membership is never inferred.
+
+    Each item reports position, video_id, url, and title, plus video
+    owner/channel, video published_at, playlist added_at, and a playlist
+    item note where the selected source provides them (the official Data
+    API path provides more fields than the yt-dlp no-key fallback; missing
+    fields are omitted, not invented). Enumeration is bounded at 500 items.
+    Use the returned video IDs with the existing transcript tools
+    (search_video_transcript, get_video_transcript).
+    """
+    return _call("get_playlist", playlist)
+
+
+@mcp.tool(annotations=READ_ONLY)
+def find_playlist_position(watch_url_with_list: str) -> dict[str, Any]:
+    """Find a video's actual position inside a playlist by enumeration (not the URL index).
+
+    Input must be a YouTube watch (or shorts/embed) URL containing BOTH a
+    video and list= playlist context, e.g.
+    https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&index=7.
+    The playlist is enumerated and the video's 1-based position is
+    reported; the URL's index parameter is returned only as
+    `url_index_context` and is never trusted.
+    """
+    return _call("find_playlist_position", watch_url_with_list)
+
+
 def main() -> None:
     transport = os.getenv("MCP_TRANSPORT", "streamable-http")
     if transport not in {"streamable-http", "stdio", "sse"}:

@@ -4,7 +4,9 @@
 
 Ask about the last 30 minutes of a four-hour video, retrieve only a relevant chapter instead of consuming the transcript from the beginning, or continue through long transcripts page by page. Transcript retrieval supports bounded `start`/`end` ranges and continuation-based pagination, so ChatGPT can request the part it actually needs rather than wasting context on everything that came before it.
 
-Under the hood, this is a read-only MCP bridge for current YouTube metadata, captions, channels, recent uploads, and search. It is deliberately a small proof of concept for the path:
+Playlist enumeration support adds `get_playlist` and `find_playlist_position` for explicit, ordered playlist context. Enumerate a playlist, select videos, and reuse the existing transcript tools without inferring membership from a bare video URL.
+
+Under the hood, this is a read-only MCP bridge for current YouTube metadata, captions, channels, recent uploads, playlists, and search. It is deliberately a small proof of concept for the path:
 
 `ChatGPT -> MCP -> YouTube -> structured data -> ChatGPT`
 
@@ -57,6 +59,7 @@ For a guided Portainer Web Editor stack, use the hosted web generator at **https
 ## Security boundary
 
 * Every MCP tool is annotated read-only and idempotent.
+* `get_playlist` and `find_playlist_position` are deterministic, read-only, idempotent playlist tools with bounded enumeration; membership is never inferred from a bare video URL, which requires explicit `list=` context.
 * There are no post, comment, subscribe, delete, upload, or account-modification tools.
 * API keys remain server-side environment variables and are never returned.
 * Arbitrary URLs are rejected; only recognized YouTube URL shapes are accepted.

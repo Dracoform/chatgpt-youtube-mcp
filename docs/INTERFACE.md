@@ -78,7 +78,44 @@ Overlapping or nearby hits are merged into one region, recording all contributin
 - Results are **locators**, not authoritative passages. Follow promising hits with a bounded `get_video_transcript(start=..., end=...)` call to read the actual passage before drawing conclusions.
 - **Zero matches do not prove the topic is absent.** They only mean the supplied query strings were not found as substrings. For exhaustive review, page through the full transcript with `get_video_transcript` and its `pagination` continuation tokens (this remains available and authoritative).
 
-Playlist support is not implemented (planned for a later phase).
+### `get_playlist`
+
+Input:
+
+```json
+{
+  "playlist": "https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&index=3"
+}
+```
+
+Accepts one `playlist` string: a bare playlist ID with a `PL`, `UU`, `RD`, `OL`, `FL`, or `LL` prefix; a `youtube.com/playlist?list=...` URL; or a watch, shorts, embed (or youtu.be) URL carrying `list=` context. A bare video URL without `list=` is rejected; playlist membership is never inferred.
+
+For a watch URL with `list=` context, `playlist_reference` includes the `video_id` from the URL and `url_index_context` from its `index` parameter. Both are context only: item positions come from playlist enumeration and are 1-based.
+
+Returns `ok`, `playlist_reference`, `playlist`, ordered `items[]`, `pagination`, and `provenance`. `playlist` contains `playlist_id`, `title`, `description` (bounded to 1000 characters), `channel_id`, `channel_title`, `published_at`, `item_count`, and `item_count_reported`. Each item can contain `position`, `video_id`, `url`, `title`, `channel_title`, `channel_id`, `video_published_at`, `playlist_added_at`, `note`, `duration_seconds`, and `availability_note`; source-dependent fields are omitted when unavailable rather than invented. `pagination` contains `has_more`, `next_continuation`, `returned_items`, and `total_items`.
+
+- **Official path (`YOUTUBE_API_KEY` configured):** calls Data API `playlists.list` and `playlistItems.list` with `part=snippet,contentDetails`, uses `maxResults <= 50`, follows `nextPageToken` automatically, and hard-bounds each call at 500 items.
+- **No-key fallback:** runs `yt-dlp --flat-playlist` on the playlist URL. It provides fewer fields: no `video_published_at`, `playlist_added_at`, or `note`, and playlist `published_at` is `null`. Missing fields are omitted, never inferred.
+
+The tools are deterministic, read-only, and idempotent. They enumerate explicit playlist data; there is no semantic search or LLM matching.
+
+### `find_playlist_position`
+
+Input:
+
+```json
+{
+  "watch_url_with_list": "https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&index=7"
+}
+```
+
+Requires a watch, shorts, or embed URL containing **both** a video ID and `list=` playlist context. A bare video URL is rejected because membership cannot be inferred, and a bare playlist ID is insufficient because no target video was supplied.
+
+Enumerates the playlist (within the 500-item call bound) and returns the target video's actual 1-based `position`. The URL's `index` is returned as `url_index_context` for comparison only and never determines the result. If enumeration does not contain the video, the tool returns `video_not_in_playlist`.
+
+#### Playlist workflow
+
+Call `get_playlist` to enumerate and select videos, then pass the returned video IDs to `search_video_transcript` and `get_video_transcript` as needed.
 
 ### `get_channel`
 
@@ -111,7 +148,7 @@ Official mode accepts YouTube's supported order values. Limit is clamped to 1..2
 }
 ```
 
-Representative codes: `invalid_video_reference`, `invalid_channel_reference`, `api_key_required`, `video_not_found`, `channel_not_found`, `transcript_unavailable`, `transcript_fetch_failed`, `upstream_request_failed`, `ytdlp_failed`, and `unofficial_fallback_disabled`.
+Representative codes: `invalid_video_reference`, `invalid_channel_reference`, `invalid_playlist_reference`, `playlist_not_found`, `video_not_in_playlist`, `api_key_required`, `video_not_found`, `channel_not_found`, `transcript_unavailable`, `transcript_fetch_failed`, `upstream_request_failed`, `ytdlp_failed`, and `unofficial_fallback_disabled`.
 
 ## Recommended model workflow
 
