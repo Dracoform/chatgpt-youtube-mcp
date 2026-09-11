@@ -10,7 +10,7 @@ Playlist support adds `get_playlist` and `find_playlist_position` for explicit, 
 
 Membership is never inferred from a bare video URL.
 
-Optionally, the server can self-update its bundled `yt-dlp` in the background from PyPI (staged, SHA-256-verified, validated before promotion). This is **disabled by default** and uses the `stable` channel unless `nightly` is explicitly opted into.
+Optionally, the server can self-update its bundled `yt-dlp` in the background from PyPI. Updates are staged, SHA-256-verified, validated before promotion, and promoted atomically. This is **disabled by default** and uses the `stable` channel unless `nightly` is explicitly opted into.
 
 Under the hood, this is a read-only MCP bridge for current YouTube metadata, captions, channels, recent uploads, playlists, search, and transcript retrieval. It is deliberately a small proof of concept for the path:
 
@@ -70,6 +70,81 @@ For a guided Portainer Web Editor stack, use the hosted web generator at **https
 
 The Bash (`generators/generate_docker-compose_for_ChatGPT_MCP.sh`) and PowerShell (`generators/generate_docker-compose_for_ChatGPT_MCP.ps1`) generators remain available as offline alternatives — all three produce the same stack. See [docs/PORTAINER_STACK_GENERATORS.md](docs/PORTAINER_STACK_GENERATORS.md).
 
+## Transcript sizing and pagination
+
+Transcript responses are deliberately bounded.
+
+```env
+# Default transcript response size.
+YOUTUBE_TRANSCRIPT_MAX_CHARS=60000
+
+# Absolute maximum allowed per request.
+YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS=120000
+```
+
+`YOUTUBE_TRANSCRIPT_MAX_CHARS` is the normal page size, not the total transcript limit. Long transcripts are continued through pagination using `pagination.has_more` and `next_continuation`.
+
+Keeping the default at 60,000 characters avoids unnecessarily large MCP responses while still allowing a caller to request up to 120,000 characters where useful. Transcripts longer than either value can be retrieved page by page.
+
+For known sections of long videos, prefer bounded `start` and `end` ranges rather than retrieving content from the beginning.
+
+## Optional yt-dlp self-updater
+
+The server includes an optional staged updater for `yt-dlp`. It is intended to provide a faster recovery path when upstream YouTube changes break extraction without requiring the MCP itself to implement or maintain a custom YouTube extractor.
+
+The updater is **disabled by default**. When disabled, the `yt-dlp` version bundled with the container is used normally and no updater background work or PyPI requests are performed.
+
+The available configuration options are:
+
+```env
+# Enable the background updater. Default: false
+YTDLP_AUTO_UPDATE=false
+
+# Update channel: stable or nightly. Default: stable
+YTDLP_UPDATE_CHANNEL=stable
+
+# Seconds between update checks. Default: 86400 (24 hours)
+YTDLP_UPDATE_INTERVAL=86400
+
+# Persistent directory for staged yt-dlp versions.
+# Default: /app/state/ytdlp
+YTDLP_STATE_DIR=/app/state/ytdlp
+
+# Run an additional live YouTube smoke test before promotion.
+# Default: false
+YTDLP_UPDATE_SMOKE=false
+
+# Video used by the optional promotion smoke test.
+# Normally there is no reason to change this.
+YTDLP_UPDATE_SMOKE_URL=https://www.youtube.com/watch?v=BaW1PyD2tbw
+```
+
+`stable` is the recommended channel. `nightly` is available as an explicit opt-in for situations where an upstream YouTube change requires a newer `yt-dlp` build.
+
+`YTDLP_STATE_DIR` should reside on persistent writable storage when the updater is enabled. The supplied Docker Compose configuration provides this through the `/app/state` volume.
+
+`YTDLP_UPDATE_SMOKE_URL` is only used when `YTDLP_UPDATE_SMOKE=true`.
+
+When automatic updating is enabled, an update is handled as a staged promotion rather than replacing the bundled package in place:
+
+1. release metadata is retrieved from PyPI;
+2. the candidate wheel is downloaded with a bounded maximum size;
+3. its SHA-256 digest is verified against the PyPI metadata;
+4. the candidate is extracted into its own immutable version directory;
+5. the candidate must successfully run and report the expected `yt-dlp` version;
+6. if `YTDLP_UPDATE_SMOKE=true`, an additional live YouTube smoke check must succeed;
+7. only then is the candidate atomically promoted to the active version.
+
+The previous promoted version is retained for rollback. A failed download, checksum verification, extraction, validation, or smoke test leaves the currently active version untouched.
+
+The bundled container version is never overwritten and remains the known-good fallback.
+
+Active requests resolve the selected `yt-dlp` version when their subprocess starts, so atomic promotion cannot expose a partially installed version to an in-flight request.
+
+Updater status is available through the read-only `get_ytdlp_updater_status` MCP tool. It reports configuration, bundled and active versions, the previous version, staged versions, and the result of the latest update check.
+
+> **Security note:** Enabling automatic updates permits newly downloaded `yt-dlp` code to execute inside the MCP container. SHA-256 verification, validation-before-promotion, bounded downloads, rollback, and the permanent bundled fallback reduce the risk, but automatic updating remains an explicit trust decision. Leave `YTDLP_AUTO_UPDATE=false` if you prefer to update only by deploying newly built container images.
+
 ## Playlist behavior
 
 ### `get_playlist`
@@ -127,7 +202,7 @@ This prevents stale, modified, misleading, or absent URL indices from being mist
 * `search_video_transcript` locates regions in long transcripts via **deterministic textual substring search** — multiple `queries` per call, no semantic/fuzzy/LLM matching.
 * Search results are locators (`match_start`/`match_end`, `timestamp`, snippet text), not authoritative transcript passages. Follow promising hits with a bounded `get_video_transcript(start, end)`.
 * Zero search matches mean only that the supplied query strings were not found. They do **not** prove a topic is absent; full pagination via `get_video_transcript` remains the exhaustive fallback. See [docs/INTERFACE.md](docs/INTERFACE.md).
-* yt-dlp updates are opt-in (`YTDLP_AUTO_UPDATE` defaults to false). When enabled, downloads are SHA-256-verified, validated before promotion, staged versions are immutable, the previous version is retained for rollback, and update failures never remove the bundled fallback or affect server availability.
+* yt-dlp updates are opt-in (`YTDLP_AUTO_UPDATE` defaults to false). When enabled, downloads are SHA-256-verified, size-bounded, validated before promotion, staged versions are immutable, the previous version is retained for rollback, and update failures never remove the bundled fallback or affect server availability.
 
 ## Upstream behavior and failures
 
