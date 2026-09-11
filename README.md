@@ -61,6 +61,7 @@ For a guided Portainer Web Editor stack, use the hosted web generator at **https
 * API keys remain server-side environment variables and are never returned.
 * Arbitrary URLs are rejected; only recognized YouTube URL shapes are accepted.
 * Tool output and transcript size are bounded (`YOUTUBE_TRANSCRIPT_MAX_CHARS`, default 60000, hard-capped by `YOUTUBE_TRANSCRIPT_HARD_MAX_CHARS`, default 120000). Long transcripts are paginated: `get_video_transcript` accepts `start`/`end` (seconds, "MM:SS", "HH:MM:SS") and returns `pagination.has_more` / `next_continuation` so a client can continue through the transcript without receiving repeated content.
+* `search_video_transcript` locates regions in long transcripts via **deterministic textual substring search** — multiple `queries` per call, no semantic/fuzzy/LLM matching. Results are locators (`match_start`/`match_end`, `timestamp`, snippet text): follow promising hits with a bounded `get_video_transcript(start, end)`. Zero matches mean the query strings were not found; they do **not** prove a topic is absent — full pagination via `get_video_transcript` remains the exhaustive fallback. See [docs/INTERFACE.md](docs/INTERFACE.md).
 
 ## Deliberate PoC limits
 

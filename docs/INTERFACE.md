@@ -46,6 +46,40 @@ Language order is a preference. The bridge tries preferred manual/automatic trac
 - New error codes: `invalid_timestamp`, `invalid_time_range`, `invalid_continuation`.
 - Backward compatibility: omitting the new parameters behaves exactly as before; `segment_count` now counts the segments actually returned; a new `pagination` object is always present.
 
+### `search_video_transcript`
+
+Input:
+
+```json
+{
+  "video":"VIDEO_ID",
+  "queries":["persistent memory","long-term memory"],
+  "languages":["de","en"],
+  "limit":10,
+  "context_before":10.0,
+  "context_after":20.0
+}
+```
+
+Deterministic **textual** transcript search: queries are matched as normalized substrings (Unicode NFKC + casefold + whitespace collapse). There is **no semantic, fuzzy, embedding, or LLM-based matching** — a query finds only text that literally contains it after normalization. Accepts multiple `queries` (always a list) in one call, e.g. several formulations of one topic.
+
+Returns `matches`: candidate regions ordered chronologically, each with:
+
+- `match_start`/`match_end` — start and end (seconds) of the matching transcript segment;
+- `start`/`end` — locator window (`match_start - context_before` .. `match_end + context_after`, clipped to the transcript bounds) covered by the returned snippet;- `timestamp` — `HH:MM:SS` of the match;
+- `text` — the actual transcript text of the segments overlapping the window (locator snippet, not an authoritative passage);
+- `matched_queries` — the query strings (original spelling) that matched inside this region.
+
+Overlapping or nearby hits are merged into one region, recording all contributing queries. `limit` (default 10, hard max 50) bounds returned regions; `results_truncated_by_limit` and `total_matches_before_limit` report when hits were cut. Error codes: `invalid_query`, `invalid_limit`, plus the transcript errors (`transcript_unavailable`, `transcript_empty`, `transcript_fetch_failed`).
+
+**Semantics and limits — read before relying on results:**
+
+- Search is textual, not semantic. Synonyms, paraphrases, or differently inflected forms are NOT found unless supplied as additional queries.
+- Results are **locators**, not authoritative passages. Follow promising hits with a bounded `get_video_transcript(start=..., end=...)` call to read the actual passage before drawing conclusions.
+- **Zero matches do not prove the topic is absent.** They only mean the supplied query strings were not found as substrings. For exhaustive review, page through the full transcript with `get_video_transcript` and its `pagination` continuation tokens (this remains available and authoritative).
+
+Playlist support is not implemented (planned for a later phase).
+
 ### `get_channel`
 
 Input: `{"channel":"@handle"}` or a channel ID/`/channel/` URL.

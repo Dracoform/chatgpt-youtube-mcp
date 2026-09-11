@@ -104,6 +104,45 @@ def get_video_transcript(
 
 
 @mcp.tool(annotations=READ_ONLY)
+def search_video_transcript(
+    video: str,
+    queries: list[str],
+    languages: list[str] | None = None,
+    limit: int = 10,
+    context_before: float = 10.0,
+    context_after: float = 20.0,
+) -> dict[str, Any]:
+    """Search a video transcript for query terms with deterministic textual substring matching (NOT semantic search).
+
+    Pass one or more `queries` (a list, e.g. ["persistent memory", "long-term
+    memory"]). Matching normalizes case, Unicode compatibility forms, and
+    whitespace, but performs no fuzzy or semantic matching: only exact
+    normalized substrings are found. Returns candidate regions (locators)
+    with `match_start`/`match_end` (the matching segment), `start`/`end`
+    (context in seconds around the match), `timestamp`, a locator snippet
+    `text`, and `matched_queries`. Results are merged/deduplicated and
+    ordered chronologically; `limit` (default 10, max 50) bounds the number
+    of returned regions.
+
+    IMPORTANT: results are LOCATORS, not authoritative passages. Follow
+    promising hits with bounded `get_video_transcript(start=..., end=...)`
+    to read the actual passage. Zero matches only means these query strings
+    were not found — it does NOT prove the topic is absent; use full
+    transcript pagination via `get_video_transcript` as the exhaustive
+    fallback.
+    """
+    return _call(
+        "search_video_transcript",
+        video,
+        queries=queries,
+        languages=languages,
+        limit=limit,
+        context_before=context_before,
+        context_after=context_after,
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
 def get_channel(channel: str) -> dict[str, Any]:
     """Get current information for a YouTube channel ID, /channel/ URL, or @handle."""
     return _call("get_channel", channel)
