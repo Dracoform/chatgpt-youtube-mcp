@@ -252,6 +252,82 @@ def normalize_search_text(value: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
+PLAYLIST_ID_RE = re.compile(r"^(PL|UU|RD|OL|FL|LL)[A-Za-z0-9_-]{10,}$")
+
+
+def parse_playlist_reference(value: str) -> dict[str, Any]:
+    """Parse a playlist ID or a YouTube URL that carries playlist context.
+
+    Accepts:
+    - a bare playlist ID (PL..., UU..., RD..., OL..., FL..., LL...);
+    - a /playlist?list=... URL;
+    - a watch URL with list= context (the video ID, when present and valid,
+      is returned as ``video_id`` so callers can pass it to the existing
+      video tools);
+    - youtu.be, shorts/live/embed URLs with list= context.
+
+    The URL ``index`` parameter, when present, is returned only as
+    contextual information (``url_index``); the authoritative position
+    comes from playlist enumeration.
+
+    A bare video URL without list= context is deliberately NOT accepted:
+    playlist membership must not be inferred without explicit list context.
+    """
+    candidate = value.strip()
+    if PLAYLIST_ID_RE.fullmatch(candidate):
+        return {"kind": "id", "playlist_id": candidate, "video_id": None, "url_index": None}
+    parsed = urllib.parse.urlparse(candidate if "://" in candidate else f"https://{candidate}")
+    if (parsed.hostname or "").lower() not in ALLOWED_YOUTUBE_HOSTS:
+        raise YouTubeBridgeError(
+            "invalid_playlist_reference",
+            "Expected a YouTube playlist URL, a playlist ID, or a YouTube URL with list= context.",
+        )
+    query = urllib.parse.parse_qs(parsed.query)
+    # Tolerate a trailing slash (e.g. /watch/?v=...) without losing context.
+    path = parsed.path.rstrip("/") or "/"
+    parts = [part for part in parsed.path.split("/") if part]
+    playlist_id = ""
+    if path == "/playlist":
+        playlist_id = query.get("list", [""])[0]
+    else:
+        playlist_id = query.get("list", [""])[0]
+        if not playlist_id:
+            raise YouTubeBridgeError(
+                "invalid_playlist_reference",
+                "The URL does not contain list= playlist context; playlist membership cannot be inferred from a bare video URL.",
+            )
+    if not PLAYLIST_ID_RE.fullmatch(playlist_id):
+        raise YouTubeBridgeError(
+            "invalid_playlist_reference",
+            f"The URL list parameter is not a recognized playlist ID: {playlist_id!r}.",
+        )
+    video_id = ""
+    if path == "/watch":
+        video_id = query.get("v", [""])[0]
+    elif parsed.path == "/embed" or (parts and parts[0] in {"embed"}):
+        video_id = parts[1] if len(parts) >= 2 else ""
+    elif host_is_short_link(parsed.hostname):
+        video_id = parts[0] if parts else ""
+    elif parts and parts[0] in {"shorts", "live"}:
+        video_id = parts[1] if len(parts) >= 2 else ""
+    if video_id and not VIDEO_ID_RE.fullmatch(video_id):
+        video_id = ""
+    raw_index = query.get("index", [None])[0]
+    url_index: int | None = None
+    if raw_index is not None:
+        try:
+            url_index = int(raw_index)
+            if url_index < 1:
+                url_index = None
+        except ValueError:
+            url_index = None
+    return {"kind": "url", "playlist_id": playlist_id, "video_id": video_id or None, "url_index": url_index}
+
+
+def host_is_short_link(hostname: str | None) -> bool:
+    return bool(hostname) and hostname.endswith("youtu.be")  # type: ignore[union-attr]
+
+
 class YouTubeService:
     API_ROOT = "https://www.googleapis.com/youtube/v3"
     FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
@@ -869,6 +945,213 @@ class YouTubeService:
                 "duration_seconds": item.get("duration"),
             })
         return {"ok": True, "query": clean_query, "videos": videos, "provenance": provenance("yt_dlp_search", official=False)}
+
+    # ---- playlists ---------------------------------------------------------
+    # Official path: playlists.list (metadata) + playlistItems.list (ordered
+    # entries). Fallback path: yt-dlp --flat-playlist on the playlist URL.
+    # Positions come from the enumeration itself, never from a URL index.
+
+    PLAYLIST_PAGE_SIZE = 50  # official API maxResults maximum
+    PLAYLIST_MAX_ITEMS = 500  # hard bound on one enumeration request
+    PLAYLIST_DESCRIPTION_MAX_CHARS = 1000
+    PLAYLIST_NOTE_MAX_CHARS = 200
+
+    @staticmethod
+    def _bounded_text(value: Any, limit: int) -> str | None:
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        if len(text) <= limit:
+            return text
+        return text[: limit - 1] + "…"
+
+    @staticmethod
+    def _playlist_from_api(playlists_response: dict[str, Any], playlist_id: str) -> dict[str, Any]:
+        items = playlists_response.get("items", [])
+        if not items:
+            raise YouTubeBridgeError("playlist_not_found", "YouTube returned no matching public playlist.")
+        snippet = items[0].get("snippet", {})
+        return {
+            "playlist_id": playlist_id,
+            "title": snippet.get("title"),
+            "description": YouTubeService._bounded_text(snippet.get("description"), YouTubeService.PLAYLIST_DESCRIPTION_MAX_CHARS),
+            "channel_id": snippet.get("channelId"),
+            "channel_title": snippet.get("channelTitle"),
+            "published_at": snippet.get("publishedAt"),
+        }
+
+    @staticmethod
+    def _entry_from_api(item: dict[str, Any], position: int) -> dict[str, Any]:
+        snippet = item.get("snippet", {})
+        details = item.get("contentDetails", {})
+        video_id = details.get("videoId") or snippet.get("resourceId", {}).get("videoId")
+        # Only private/deleted videos lack a videoId; such items are reported
+        # with video_id None rather than skipped, so positions stay aligned
+        # with the playlist order.
+        entry: dict[str, Any] = {
+            "position": position,
+            "video_id": video_id,
+        }
+        if video_id:
+            entry["url"] = f"https://www.youtube.com/watch?v={video_id}"
+        title = snippet.get("title")
+        if title and title != "Private video" and title != "Deleted video":
+            entry["title"] = title
+        elif title in {"Private video", "Deleted video"}:
+            entry["title"] = None
+            entry["availability_note"] = title
+        else:
+            entry["title"] = title
+        if snippet.get("videoOwnerChannelTitle"):
+            entry["channel_title"] = snippet["videoOwnerChannelTitle"]
+            if snippet.get("videoOwnerChannelId"):
+                entry["channel_id"] = snippet["videoOwnerChannelId"]
+        elif snippet.get("channelTitle"):
+            entry["channel_title"] = snippet["channelTitle"]
+        if snippet.get("videoPublishedAt"):
+            entry["video_published_at"] = snippet["videoPublishedAt"]
+        elif snippet.get("publishedAt"):
+            entry["video_published_at"] = snippet["publishedAt"]
+        if details.get("videoPublishedAt"):
+            entry["video_published_at"] = details["videoPublishedAt"]
+        if snippet.get("publishedAt"):
+            entry["playlist_added_at"] = snippet["publishedAt"]
+        note = snippet.get("description")
+        if note:
+            entry["note"] = YouTubeService._bounded_text(note, YouTubeService.PLAYLIST_NOTE_MAX_CHARS)
+        return entry
+
+    def _enumerate_playlist_api(self, playlist_id: str, limit: int) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while len(entries) < limit:
+            params: dict[str, Any] = {
+                "part": "snippet,contentDetails",
+                "playlistId": playlist_id,
+                "maxResults": min(self.PLAYLIST_PAGE_SIZE, limit - len(entries)),
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            response = self._api_get("playlistItems", params)
+            for item in response.get("items", []):
+                if len(entries) >= limit:
+                    break
+                entries.append(self._entry_from_api(item, len(entries) + 1))
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+        return entries
+
+    @staticmethod
+    def _playlist_from_ytdlp(info: dict[str, Any], playlist_id: str) -> dict[str, Any]:
+        return {
+            "playlist_id": playlist_id,
+            "title": info.get("title"),
+            "description": YouTubeService._bounded_text(info.get("description"), YouTubeService.PLAYLIST_DESCRIPTION_MAX_CHARS),
+            "channel_id": info.get("channel_id") or info.get("uploader_id"),
+            "channel_title": info.get("channel") or info.get("uploader"),
+            # yt-dlp flat extraction does not expose the playlist creation date.
+            "published_at": None,
+            "item_count": info.get("playlist_count"),
+        }
+
+    @staticmethod
+    def _entry_from_ytdlp(item: dict[str, Any], position: int) -> dict[str, Any]:
+        video_id = item.get("id")
+        entry: dict[str, Any] = {"position": position, "video_id": video_id}
+        if video_id:
+            entry["url"] = f"https://www.youtube.com/watch?v={video_id}"
+        if item.get("title") is not None:
+            entry["title"] = item["title"]
+        channel_title = item.get("channel") or item.get("uploader")
+        if channel_title:
+            entry["channel_title"] = channel_title
+        if item.get("channel_id"):
+            entry["channel_id"] = item["channel_id"]
+        if item.get("duration") is not None:
+            entry["duration_seconds"] = item["duration"]
+        # flat extraction does not provide per-video publish dates, playlist
+        # added_at timestamps, or playlist item notes; those fields are
+        # omitted rather than inferred.
+        return entry
+
+    def get_playlist(self, reference: str) -> dict[str, Any]:
+        parsed = parse_playlist_reference(reference)
+        playlist_id = parsed["playlist_id"]
+        result: dict[str, Any] = {
+            "ok": True,
+            "playlist_reference": {"kind": parsed["kind"], "playlist_id": playlist_id},
+            "pagination": {"has_more": False, "next_continuation": None, "returned_items": 0, "total_items": None},
+            "items": [],
+            "provenance": None,
+        }
+        if parsed["video_id"]:
+            result["playlist_reference"]["video_id"] = parsed["video_id"]
+        if parsed["url_index"] is not None:
+            result["playlist_reference"]["url_index_context"] = parsed["url_index"]
+        if self.settings.api_key:
+            metadata_response = self._api_get("playlists", {"part": "snippet,contentDetails", "id": playlist_id})
+            playlist = self._playlist_from_api(metadata_response, playlist_id)
+            playlist["item_count"] = metadata_response["items"][0].get("contentDetails", {}).get("itemCount")
+            entries = self._enumerate_playlist_api(playlist_id, self.PLAYLIST_MAX_ITEMS)
+            result["playlist"] = playlist
+            result["items"] = entries
+            result["provenance"] = provenance("youtube_data_api_v3", official=True)
+        else:
+            info = self._yt_dlp_json(f"https://www.youtube.com/playlist?list={playlist_id}", flat=True)
+            if not info or info.get("_type") not in (None, "playlist") or not info.get("entries"):
+                raise YouTubeBridgeError("playlist_not_found", "YouTube returned no public playlist for that ID.")
+            playlist = self._playlist_from_ytdlp(info, playlist_id)
+            # The yt-dlp fallback must respect the same hard enumeration
+            # bound as the official path; oversized playlists are truncated,
+            # not returned unbounded.
+            entries = [
+                self._entry_from_ytdlp(item, position)
+                for position, item in enumerate(info.get("entries") or [], start=1)
+                if position <= self.PLAYLIST_MAX_ITEMS
+            ]
+            result["playlist"] = playlist
+            result["items"] = entries
+            result["provenance"] = provenance(
+                "yt_dlp",
+                official=False,
+                note="Fallback used because YOUTUBE_API_KEY is not configured.",
+            )
+        result["playlist"]["item_count_reported"] = len(entries)
+        result["pagination"]["returned_items"] = len(entries)
+        result["pagination"]["total_items"] = result["playlist"].get("item_count")
+        return result
+
+    def find_playlist_position(self, reference: str) -> dict[str, Any]:
+        """Locate a video's actual position within a playlist by enumeration.
+
+        The URL ``index`` parameter is not trusted; the position reported
+        here comes from enumerating the playlist (1-based). When the
+        reference carries both a video ID and list= context, only that
+        video's position is looked up.
+        """
+        parsed = parse_playlist_reference(reference)
+        if not parsed["video_id"]:
+            raise YouTubeBridgeError(
+                "invalid_playlist_reference",
+                "find_playlist_position requires a watch URL with both video and list= context (or use get_playlist to enumerate).",
+            )
+        playlist = self.get_playlist(parsed["playlist_id"])
+        video_id = parsed["video_id"]
+        for item in playlist.get("items", []):
+            if item.get("video_id") == video_id:
+                return {
+                    "ok": True,
+                    "playlist_id": parsed["playlist_id"],
+                    "video_id": video_id,
+                    "position": item["position"],
+                    "url_index_context": parsed["url_index"],
+                    "playlist_title": playlist["playlist"].get("title"),
+                    "provenance": playlist["provenance"],
+                }
+        raise YouTubeBridgeError("video_not_in_playlist", f"The video {video_id} was not found in playlist {parsed['playlist_id']} (by enumeration, not by the URL index).")
 
 
 def error_result(exc: Exception) -> dict[str, Any]:
