@@ -9,6 +9,13 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install --no-cache-dir .
 
+# Writable state directory for the optional staged yt-dlp updater (Phase 2).
+# Declared as a VOLUME and pre-created for UID 65532 so a named volume mounted
+# here is writable by the non-root runtime; with auto-update disabled (the
+# default) this is never written and stays quiescent.
+RUN mkdir -p /app/state && chown 65532:65532 /app/state
+VOLUME /app/state
+
 ENV MCP_TRANSPORT=streamable-http MCP_HOST=0.0.0.0 MCP_PORT=8765
 EXPOSE 8765
 

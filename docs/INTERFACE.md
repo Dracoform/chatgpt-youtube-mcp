@@ -135,6 +135,46 @@ Input: `{"query":"local AI benchmark","limit":10,"order":"date"}`
 
 Official mode accepts YouTube's supported order values. Limit is clamped to 1..25. Without an API key, the response is marked as `yt_dlp_search` and unofficial.
 
+### `get_ytdlp_updater_status`
+
+Input: none.
+
+Read-only diagnostics about the optional staged yt-dlp self-updater. The tool is annotated read-only and makes no network requests; it only reports the updater's current configuration and the outcome of the last update check.
+
+```json
+{
+  "ok": true,
+  "updater": {
+    "enabled": false,
+    "channel": "stable",
+    "interval_seconds": 86400,
+    "state_dir": "/app/state/ytdlp",
+    "active_version": "bundled",
+    "previous_version": null,
+    "versions_available": [],
+    "smoke_test": false,
+    "last_check_iso8601": null,
+    "last_check_result": null,
+    "last_error": null,
+    "status_note": "updater initialized"
+  }
+}
+```
+
+Field semantics:
+
+- `enabled` — whether auto-update is on. **Default OFF** (`YTDLP_AUTO_UPDATE` defaults to false). When disabled, the tool simply reports the bundled yt-dlp (installed in the image's site-packages) as `active_version: "bundled"` and does nothing else.
+- `channel` — `stable` (default) or `nightly`; `nightly` is opt-in. An invalid value falls back to `stable` rather than failing startup.
+- `interval_seconds` — seconds between background update checks (default 86400, minimum 60).
+- `state_dir` — writable directory holding the immutable staged versions and the `active`/`previous` pointer files (default `/app/state/ytdlp`).
+- `active_version` — the yt-dlp version currently serving requests: `bundled` (site-packages) or a staged version.
+- `previous_version` — the previous version retained for rollback, or `null` when none was recorded.
+- `versions_available` — sorted list of staged versions on disk.
+- `smoke_test` — whether promotion additionally runs a small live YouTube check (`YTDLP_UPDATE_SMOKE`, default false).
+- `last_check_iso8601` / `last_check_result` / `last_error` / `status_note` — the time and outcome of the last update check (`up_to_date`, `promoted`, `metadata_failed`, `validation_failed`, `rolled_back`, `update_error`, or `null` before the first check).
+
+When enabled, the updater runs in a background daemon thread (never blocking startup): it fetches release metadata, downloads the wheel, verifies its SHA-256, extracts it into an immutable version directory, validates it (`python -m yt_dlp --version`), and then atomically promotes it via the `active` pointer. The bundled site-packages copy is the always-available fallback. Any failure is logged and non-fatal: the current active version is untouched and the server keeps serving. This tool is operator-facing; the model does not need to call it for normal usage.
+
 ## Error envelope
 
 ```json
@@ -176,6 +216,8 @@ For "Schau dir dieses Video an und sag mir, was interessant ist":
 5. Base substantive claims on transcript text; identify when only metadata/description was available.
 6. Mention automatic-caption uncertainty when `automatic=true`.
 7. Do not infer that a transcript is creator-approved merely because it exists.
+
+Note: `get_ytdlp_updater_status` is an operator/observability tool for the optional yt-dlp self-updater. The model does not need to call it for normal usage; use it only when explicitly asked about the server's yt-dlp version or updater state.
 
 Example: for a 3:52:14 video and a request about "the last 30 minutes", retrieve approximately `start: "03:22:14", end: "03:52:14"` rather than paging through the transcript from `00:00`.
 

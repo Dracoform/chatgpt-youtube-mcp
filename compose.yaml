@@ -10,3 +10,11 @@ services:
       - /tmp:size=64m
     security_opt:
       - no-new-privileges:true
+    # Writable state volume for the optional staged yt-dlp updater (Phase 2).
+    # Only needed when YTDLP_AUTO_UPDATE=true; the container otherwise never
+    # writes here. The named volume is the one writable path under read_only.
+    volumes:
+      - ytdlp-state:/app/state
+
+volumes:
+  ytdlp-state:

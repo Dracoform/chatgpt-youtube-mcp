@@ -338,10 +338,12 @@ class YouTubeService:
         *,
         urlopen: Callable[..., Any] = urllib.request.urlopen,
         run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+        ytdlp_env_extra: Callable[[], dict[str, str] | None] | None = None,
     ) -> None:
         self.settings = settings or Settings.from_env()
         self._urlopen = urlopen
         self._run = run
+        self._ytdlp_env_extra = ytdlp_env_extra
         self._video_info_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     def _get_bytes(self, url: str, *, timeout: int = 25) -> bytes:
@@ -373,8 +375,16 @@ class YouTubeService:
         if playlist_end is not None:
             command += ["--playlist-end", str(playlist_end)]
         command.append(target)
+        # A staged yt-dlp version (if any active layer is installed) takes
+        # effect via PYTHONPATH on this subprocess, so requests resolve the
+        # promoted copy without changing the interpreter or site-packages.
+        extra_env = self._ytdlp_env_extra() if self._ytdlp_env_extra else None
+        run_kwargs = {}
+        if extra_env:
+            merged = {**os.environ, **extra_env}
+            run_kwargs["env"] = merged
         try:
-            completed = self._run(command, capture_output=True, text=True, timeout=90, check=False)
+            completed = self._run(command, capture_output=True, text=True, timeout=90, check=False, **run_kwargs)
         except subprocess.TimeoutExpired as exc:
             raise YouTubeBridgeError("ytdlp_timeout", "yt-dlp timed out while extracting.", retryable=True) from exc
         except Exception as exc:

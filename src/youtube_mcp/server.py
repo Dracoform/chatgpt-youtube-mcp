@@ -6,6 +6,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .core import YouTubeService, error_result
+from .updater import UpdaterSettings, YtDlpUpdater
 
 
 mcp = FastMCP(
@@ -31,8 +32,12 @@ async def healthz(request: Any) -> Any:
     return JSONResponse({"status": "ok", "service": "youtube-current-data-mcp"})
 
 
-service = YouTubeService()
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
+
+# yt-dlp updater: staged, versioned, non-blocking (starts in main() when
+# enabled). The service resolves the active staged copy (or bundled).
+updater = YtDlpUpdater(UpdaterSettings.from_env())
+service = YouTubeService(ytdlp_env_extra=updater.custom_environment)
 
 
 def _call(method: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -198,10 +203,29 @@ def find_playlist_position(watch_url_with_list: str) -> dict[str, Any]:
     return _call("find_playlist_position", watch_url_with_list)
 
 
+@mcp.tool(annotations=READ_ONLY)
+def get_ytdlp_updater_status() -> dict[str, Any]:
+    """Report the yt-dlp updater configuration and last update result.
+
+    Read-only diagnostics about the optional staged yt-dlp self-updater:
+    whether auto-update is enabled, the update channel (stable by default,
+    nightly opt-in), the active/bundled yt-dlp version, the previous version
+    retained for rollback, available staged versions, and the outcome of the
+    last update check. When auto-update is disabled, this simply reports the
+    bundled yt-dlp as active and does nothing else. Useful for operators to
+    confirm which yt-dlp version served a request without inspecting logs.
+    """
+    return {"ok": True, "updater": updater.diagnostics()}
+
+
 def main() -> None:
     transport = os.getenv("MCP_TRANSPORT", "streamable-http")
     if transport not in {"streamable-http", "stdio", "sse"}:
         raise SystemExit("MCP_TRANSPORT must be streamable-http, stdio, or sse")
+    # Start the yt-dlp updater in a background daemon thread BEFORE serving.
+    # It never blocks startup and its failures are never fatal; requests keep
+    # using the bundled version until a candidate is validated and promoted.
+    updater.start_background()
     mcp.run(transport=transport)
 
 

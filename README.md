@@ -10,6 +10,8 @@ Playlist support adds `get_playlist` and `find_playlist_position` for explicit, 
 
 Membership is never inferred from a bare video URL.
 
+Optionally, the server can self-update its bundled `yt-dlp` in the background from PyPI (staged, SHA-256-verified, validated before promotion). This is **disabled by default** and uses the `stable` channel unless `nightly` is explicitly opted into.
+
 Under the hood, this is a read-only MCP bridge for current YouTube metadata, captions, channels, recent uploads, playlists, search, and transcript retrieval. It is deliberately a small proof of concept for the path:
 
 `ChatGPT -> MCP -> YouTube -> structured data -> ChatGPT`
@@ -125,6 +127,7 @@ This prevents stale, modified, misleading, or absent URL indices from being mist
 * `search_video_transcript` locates regions in long transcripts via **deterministic textual substring search** — multiple `queries` per call, no semantic/fuzzy/LLM matching.
 * Search results are locators (`match_start`/`match_end`, `timestamp`, snippet text), not authoritative transcript passages. Follow promising hits with a bounded `get_video_transcript(start, end)`.
 * Zero search matches mean only that the supplied query strings were not found. They do **not** prove a topic is absent; full pagination via `get_video_transcript` remains the exhaustive fallback. See [docs/INTERFACE.md](docs/INTERFACE.md).
+* yt-dlp updates are opt-in (`YTDLP_AUTO_UPDATE` defaults to false). When enabled, downloads are SHA-256-verified, validated before promotion, staged versions are immutable, the previous version is retained for rollback, and update failures never remove the bundled fallback or affect server availability.
 
 ## Upstream behavior and failures
 
@@ -149,3 +152,4 @@ Where useful, responses expose provenance describing which upstream source produ
 * Google OAuth for personal subscriptions is not included in v0.1. It needs a real per-user authorization broker, not a token pasted into the model.
 * Transcript retrieval for third-party videos is necessarily unofficial. YouTube Data API v3 only permits caption download when the caller can edit the video.
 * A public plugin submission needs a stable public HTTPS deployment. Developer-mode testing can use OpenAI Secure MCP Tunnel instead.
+* The yt-dlp self-updater is an opt-in, unaudited-by-you code path intended for rapid recovery when YouTube changes break extraction. It is disabled by default, and the bundled image version remains the trusted baseline.
