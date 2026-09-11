@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -236,6 +237,19 @@ def parse_json3_transcript(data: bytes) -> list[dict[str, Any]]:
         segments.append({"start_seconds": start, "duration_seconds": duration, "text": text})
         previous = text
     return segments
+
+
+def normalize_search_text(value: str) -> str:
+    """Deterministic normalization for transcript text search.
+
+    Unicode compatibility decomposition + casefold + whitespace collapse,
+    so that matching is insensitive to case and insignificant spacing
+    differences. No stemming, no fuzzy behavior.
+    """
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = normalized.casefold()
+    normalized = unicodedata.normalize("NFKC", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 class YouTubeService:
@@ -540,6 +554,208 @@ class YouTubeService:
                 "total_chars": total_chars,
                 "range_start": range_start,
                 "range_end": range_end,
+            },
+            "provenance": provenance("yt_dlp_youtube_caption_endpoint", official=False, note="Unofficial fallback; availability can change or be rate-limited."),
+        }
+
+    def search_video_transcript(
+        self,
+        reference: str,
+        *,
+        queries: list[str],
+        languages: list[str] | None = None,
+        limit: int = 10,
+        context_before: float = 10.0,
+        context_after: float = 20.0,
+    ) -> dict[str, Any]:
+        """Locate regions in a transcript via deterministic substring search.
+
+        Search is purely textual (normalized substring match). Results are
+        LOCATORS: small context snippets for the consumer to inspect further
+        with get_video_transcript(start, end). Zero matches do NOT prove that
+        a topic is absent — exhaustive pagination remains available.
+        """
+        video_id = parse_video_id(reference)
+        if not isinstance(queries, list):
+            raise YouTubeBridgeError("invalid_query", "invalid_query: queries must be a list of non-empty strings.")
+        normalized_queries = []
+        for query in queries:
+            if not isinstance(query, str):
+                raise YouTubeBridgeError("invalid_query", "invalid_query: queries must be a list of non-empty strings.")
+            normalized = normalize_search_text(query)
+            if not normalized:
+                raise YouTubeBridgeError("invalid_query", f"invalid_query: queries must contain at least one non-whitespace string; got {query!r}.")
+            normalized_queries.append(normalized)
+        # Deterministic dedupe: preserve first-seen order.
+        # Deterministic dedupe by normalized form; keep the first original
+        # spelling of each query for reporting.
+        seen: set[str] = set()
+        unique_queries: list[str] = []
+        original_by_normalized: dict[str, str] = {}
+        for original, normalized in zip(queries, normalized_queries):
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            unique_queries.append(normalized)
+            original_by_normalized[normalized] = original
+        if not unique_queries:
+            raise YouTubeBridgeError("invalid_query", "invalid_query: queries must not be empty.")
+
+        if isinstance(limit, bool) or not isinstance(limit, (int, float)) or not math.isfinite(limit):
+            raise YouTubeBridgeError("invalid_limit", f"invalid_limit: {limit!r}")
+        limit_value = int(limit)
+        if limit_value != limit:
+            raise YouTubeBridgeError("invalid_limit", f"invalid_limit: limit must be an integer, got {limit!r}")
+        safe_limit = max(1, min(limit_value, 50))
+        if safe_limit != limit:
+            raise YouTubeBridgeError(
+                "invalid_limit",
+                f"invalid_limit: limit must be between 1 and 50, got {limit!r}",
+            )
+
+        try:
+            ctx_before = float(context_before)
+            ctx_after = float(context_after)
+        except (TypeError, ValueError):
+            raise YouTubeBridgeError("invalid_context", f"invalid_context: context_before={context_before!r}, context_after={context_after!r}")
+        if not math.isfinite(ctx_before) or not math.isfinite(ctx_after) or ctx_before < 0 or ctx_after < 0:
+            raise YouTubeBridgeError("invalid_context", f"invalid_context: context_before={context_before!r}, context_after={context_after!r}")
+
+        preferred = [lang.strip() for lang in (languages or list(self.settings.default_languages)) if lang.strip()]
+        info = self._get_video_info(video_id)
+        candidates = self._track_candidates(info, preferred)
+        if not candidates:
+            raise YouTubeBridgeError("transcript_unavailable", "transcript_unavailable: No manual or automatic captions are available for this video.")
+        last_error: Exception | None = None
+        language = ""
+        automatic = False
+        segments: list[dict[str, Any]] = []
+        for language, automatic, track in candidates:
+            try:
+                segments = parse_json3_transcript(self._get_bytes(track["url"], timeout=60))
+                if segments:
+                    break
+            except Exception as exc:
+                last_error = exc
+        if not segments:
+            if last_error:
+                raise YouTubeBridgeError("transcript_fetch_failed", f"Caption tracks were listed but could not be retrieved: {last_error}", retryable=True) from last_error
+            raise YouTubeBridgeError("transcript_empty", "transcript_empty: Caption tracks were available but contained no transcript text.")
+
+        normalized_segments = [normalize_search_text(segment["text"]) for segment in segments]
+
+        # Cross-segment matching: build the joined normalized transcript with
+        # a char-offset -> segment-index map, so phrases split across caption
+        # segments are found too.
+        offset_to_segment: list[int] = []
+        joined_parts: list[str] = []
+        for index, normalized_text in enumerate(normalized_segments):
+            offset_to_segment.extend([index] * (len(normalized_text) + 1))  # +1 for the join space
+            joined_parts.append(normalized_text)
+        joined_transcript = " ".join(joined_parts)
+        # offset_to_segment[i] = index of the segment that char offset i belongs to
+
+        # Deterministic chronological hit accumulation, merged/deduped by
+        # overlap. Each region tracks which queries matched inside it.
+        merged: list[dict[str, Any]] = []  # keys: first, last, matched_queries (ordered)
+        for query in unique_queries:
+            search_from = 0
+            while True:
+                pos = joined_transcript.find(query, search_from)
+                if pos < 0:
+                    break
+                search_from = pos + 1
+                match_first_segment = offset_to_segment[pos]
+                match_last_segment = offset_to_segment[min(pos + len(query) - 1, len(offset_to_segment) - 1)]
+                match_start = float(segments[match_first_segment]["start_seconds"])
+                match_end = float(segments[match_last_segment]["start_seconds"]) + max(float(segments[match_last_segment].get("duration_seconds") or 0.0), 0.0)
+                region_first = match_start - ctx_before
+                region_last = match_start + ctx_after
+                if merged and region_first <= merged[-1]["last"]:
+                    # Overlapping or adjacent region: extend it, keep contributing
+                    # queries in first-seen order.
+                    region = merged[-1]
+                    region["last"] = max(region["last"], region_last)
+                    region["first"] = min(region["first"], region_first)
+                    region["match_start"] = min(region["match_start"], match_start)
+                    region["match_end"] = max(region["match_end"], match_end)
+                    for q in (query,):
+                        if q not in region["matched_queries"]:
+                            region["matched_queries"].append(q)
+                else:
+                    merged.append({
+                        "first": region_first,
+                        "last": region_last,
+                        "match_start": match_start,
+                        "match_end": match_end,
+                        "matched_queries": [query],
+                    })
+        # Per-query accumulation can interleave chronologically; sort, then
+        # run a merge pass so overlapping hits (including across different
+        # queries) are combined deterministically.
+        merged.sort(key=lambda region: (region["match_start"], region["first"]))
+        combined: list[dict[str, Any]] = []
+        for region in merged:
+            if combined and region["first"] <= combined[-1]["last"]:
+                target = combined[-1]
+                target["last"] = max(target["last"], region["last"])
+                target["first"] = min(target["first"], region["first"])
+                target["match_start"] = min(target["match_start"], region["match_start"])
+                target["match_end"] = max(target["match_end"], region["match_end"])
+                for query in region["matched_queries"]:
+                    if query not in target["matched_queries"]:
+                        target["matched_queries"].append(query)
+            else:
+                combined.append(region)
+        merged = combined
+
+        total_matches = len(merged)
+        truncated_by_limit = False
+        if total_matches > safe_limit:
+            merged = merged[:safe_limit]
+            truncated_by_limit = True
+
+        transcript_start = float(segments[0]["start_seconds"])
+        transcript_end = float(segments[-1]["start_seconds"]) + max(float(segments[-1].get("duration_seconds") or 0.0), 0.0)
+        regions = []
+        for region in merged:
+            # The reported window is the requested context around the match,
+            # clipped to the actual transcript bounds and always covering at
+            # least the matching segment(s); the snippet text comes from the
+            # real transcript segments overlapping that window (never
+            # fabricated text).
+            start = min(max(region["first"], transcript_start), region["match_start"])
+            end = max(min(region["last"], transcript_end), region["match_end"])
+            snippet_parts = [
+                normalize_search_text(segment["text"])
+                for segment in segments
+                if float(segment["start_seconds"]) < end
+                and float(segment["start_seconds"]) + max(float(segment.get("duration_seconds") or 0.0), 0.0) > start
+            ]
+            regions.append({
+                "match_start": region["match_start"],
+                "match_end": region["match_end"],
+                "start": start,
+                "end": end,
+                "timestamp": _seconds_to_timestamp(region["match_start"]),
+                "text": " ".join(snippet_parts),
+                "matched_queries": [original_by_normalized[query] for query in region["matched_queries"]],
+            })
+
+        return {
+            "ok": True,
+            "video": {"video_id": video_id, "title": info.get("title"), "channel": info.get("channel") or info.get("uploader")},
+            "language": language,
+            "automatic": automatic,
+            "queries": unique_queries,
+            "matches": regions,
+            "match_count": len(regions),
+            "total_matches_before_limit": total_matches,
+            "results_truncated_by_limit": truncated_by_limit,
+            "limit": safe_limit,
+            "search_semantics": {
+                "type": "textual_substring",
+                "note": "Results are locators, not authoritative passages. Zero matches do not prove the topic is absent; use get_video_transcript with ranges or full pagination for exhaustive review.",
             },
             "provenance": provenance("yt_dlp_youtube_caption_endpoint", official=False, note="Unofficial fallback; availability can change or be rate-limited."),
         }
