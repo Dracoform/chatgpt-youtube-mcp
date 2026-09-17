@@ -776,6 +776,7 @@ dependencies = [
 [package.optional-dependencies]
 edge = [
     { name = "httpx" },
+    { name = "pyjwt" },
     { name = "starlette" },
     { name = "uvicorn" },
 ]
@@ -787,6 +788,7 @@ test = [
 requires-dist = [
     { name = "httpx", marker = "extra == 'edge'" },
     { name = "mcp", specifier = ">=1.12,<2" },
+    { name = "pyjwt", marker = "extra == 'edge'", specifier = ">=2.13,<3" },
     { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6" },
     { name = "starlette", marker = "extra == 'edge'" },
     { name = "uvicorn", marker = "extra == 'edge'" },

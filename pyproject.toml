@@ -25,6 +25,11 @@ edge = [
   "starlette",
   "httpx",
   "uvicorn",
+  # JWT/JWKS verification for the optional OAuth Resource Server (Stage 3).
+  # Already in the dependency tree transitively via `mcp` (which depends on
+  # pyjwt[crypto]); declared here explicitly because the edge imports it
+  # directly. Established, maintained JWS/JWK library.
+  "pyjwt>=2.13,<3",
 ]
 
 [project.urls]
