@@ -16,5 +16,48 @@ services:
     volumes:
       - ytdlp-state:/app/state
 
+  # Public Remote MCP edge (Stage 0/1): static Bearer auth + Streamable HTTP
+  # proxy to the private core above. Optional: enabled with
+  #   docker compose --profile edge up
+  # The edge is the intended future public exposure point; by default it also
+  # binds loopback-only locally. It is built from the same image (which ships
+  # the `youtube-mcp-edge` console script). Tokens come from EDGE_STATIC_TOKENS
+  # in .env (never committed); with EDGE_STATIC_AUTH_ENABLED (default true) but
+  # no tokens configured, the edge refuses to start (fail closed).
+  youtube-mcp-edge:
+    profiles: ["edge"]
+    build: .
+    entrypoint: ["youtube-mcp-edge"]
+    restart: unless-stopped
+    environment:
+      EDGE_MCP_UPSTREAM_URL: http://youtube-mcp:8765/mcp
+      EDGE_HOST: 0.0.0.0
+      EDGE_PORT: "8766"
+      EDGE_STATIC_AUTH_ENABLED: "${EDGE_STATIC_AUTH_ENABLED:-true}"
+      EDGE_STATIC_TOKENS: "${EDGE_STATIC_TOKENS:-}"
+      EDGE_MAX_REQUEST_BYTES: "${EDGE_MAX_REQUEST_BYTES:-2097152}"
+    ports:
+      - "127.0.0.1:8766:8766"
+    depends_on:
+      youtube-mcp:
+        condition: service_healthy
+    healthcheck:
+      # The image HEALTHCHECK probes the CORE's /healthz on 8765; the edge
+      # serves its own /healthz on 8766, so override it for this service.
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8766/healthz', timeout=2).status == 200 else 1)"
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 12
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   ytdlp-state:
