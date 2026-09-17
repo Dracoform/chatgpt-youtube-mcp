@@ -280,6 +280,8 @@ def main() -> None:
         port=settings.port,
         factory=True,
         log_level="info",
+        ssl_certfile=settings.tls_cert_file,
+        ssl_keyfile=settings.tls_key_file,
     )
 
 

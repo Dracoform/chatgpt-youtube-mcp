@@ -419,5 +419,105 @@ class EdgeCliSmokeTests(unittest.TestCase):
         self.assertEqual(len(upstream.requests), 1)
 
 
+class StageTwoSettingsTests(unittest.TestCase):
+    """Stage 2: TLS configuration validation for the public static-auth edge."""
+
+    def _tmp_cert(self):
+        import tempfile
+        from pathlib import Path
+
+        d = Path(tempfile.mkdtemp(prefix="edge-tls-"))
+        return str(d / "tls.crt"), str(d / "tls.key")
+
+    def test_tls_default_off(self):
+        s = make_settings(static_tokens=["t"])
+        self.assertFalse(s.tls_enabled)
+        self.assertIsNone(s.tls_cert_file)
+        self.assertIsNone(s.tls_key_file)
+
+    def test_tls_both_set_enabled(self):
+        cert, key = self._tmp_cert()
+        s = make_settings(static_tokens=["t"], tls_cert_file=cert, tls_key_file=key)
+        self.assertTrue(s.tls_enabled)
+        # Files are not created by make_settings (no existence check there);
+        # from_env enforces existence.
+        self.assertEqual(s.tls_cert_file, cert)
+
+    def test_tls_cert_only_raises(self):
+        cert, _ = self._tmp_cert()
+        with self.assertRaises(ValueError):
+            make_settings(static_tokens=["t"], tls_cert_file=cert, tls_key_file=None)
+
+    def test_tls_key_only_raises(self):
+        _, key = self._tmp_cert()
+        with self.assertRaises(ValueError):
+            make_settings(static_tokens=["t"], tls_cert_file=None, tls_key_file=key)
+
+    def test_tls_missing_file_fails_closed(self):
+        import os
+        import youtube_mcp_edge.settings as settings_mod
+
+        env = {
+            "EDGE_TLS_CERT_FILE": "/nonexistent/tls.crt",
+            "EDGE_TLS_KEY_FILE": "/nonexistent/tls.key",
+        }
+        saved = {k: os.environ.get(k) for k in env}
+        for k, v in env.items():
+            os.environ[k] = v
+        try:
+            with self.assertRaises(ValueError):
+                settings_mod.EdgeSettings.from_env()
+        finally:
+            for k in env:
+                prior = saved.get(k) or ""
+                if prior:
+                    os.environ[k] = prior
+                else:
+                    os.environ.pop(k, None)
+
+    def test_tls_cert_without_key_env_fails_closed(self):
+        import os
+        import youtube_mcp_edge.settings as settings_mod
+
+        cert, _ = self._tmp_cert()
+        for k in ("EDGE_TLS_CERT_FILE", "EDGE_TLS_KEY_FILE"):
+            os.environ.pop(k, None)
+        os.environ["EDGE_TLS_CERT_FILE"] = cert
+        try:
+            with self.assertRaises(ValueError):
+                settings_mod.EdgeSettings.from_env()
+        finally:
+            os.environ.pop("EDGE_TLS_CERT_FILE", None)
+            os.environ.pop("EDGE_TLS_KEY_FILE", None)
+
+    def test_tls_env_parse_success(self):
+        import os
+        from pathlib import Path
+
+        import youtube_mcp_edge.settings as settings_mod
+
+        d = Path(self._tmp_cert()[0]).parent
+        cert = d / "tls.crt"
+        key = d / "tls.key"
+        cert.write_text("CERT")
+        key.write_text("KEY")
+        for k in ("EDGE_TLS_CERT_FILE", "EDGE_TLS_KEY_FILE"):
+            os.environ.pop(k, None)
+        saved_cert = os.environ.get("EDGE_TLS_CERT_FILE")
+        saved_key = os.environ.get("EDGE_TLS_KEY_FILE")
+        os.environ["EDGE_TLS_CERT_FILE"] = str(cert)
+        os.environ["EDGE_TLS_KEY_FILE"] = str(key)
+        try:
+            s = settings_mod.EdgeSettings.from_env()
+            self.assertTrue(s.tls_enabled)
+        finally:
+            for k, saved in (("EDGE_TLS_CERT_FILE", saved_cert),
+                             ("EDGE_TLS_KEY_FILE", saved_key)):
+                if saved:
+                    os.environ[k] = saved
+                else:
+                    os.environ.pop(k, None)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

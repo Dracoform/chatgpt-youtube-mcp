@@ -1,7 +1,15 @@
 """Edge configuration from environment — minimal, env/secret oriented.
 
-Only what Stage 0/1 needs is defined. OAuth / TLS / certificate settings are
-deliberately NOT present yet (docs/MULTI_CLIENT_MCP_PHASE1_ARCHITECTURE.md).
+Only what Stage 0/1/2 needs is defined. OAuth / ACME / certificate-issuance
+settings are deliberately NOT present (docs/MULTI_CLIENT_MCP_PHASE1_ARCHITECTURE.md
+defers cert provisioning to a later phase).
+
+Stage 2 adds TLS: the edge can terminate HTTPS itself with operator-provided
+certificate/key files (`EDGE_TLS_CERT_FILE` / `EDGE_TLS_KEY_FILE`). If neither is
+set, the edge serves plain HTTP — intended for (a) local/loopback use and (b) the
+external-ingress path where an existing reverse proxy (Caddy/nginx/Traefik)
+terminates TLS in front of the edge. Setting exactly one of the two is a
+configuration error (fail closed).
 """
 
 from __future__ import annotations
@@ -76,6 +84,18 @@ class EdgeSettings:
     max_request_bytes: int = 2 * 1024 * 1024  # 2 MiB
     # Timeout for the upstream request as a whole (seconds).
     upstream_timeout_seconds: float = 120.0
+    # Optional TLS termination at the edge. Both must be set together:
+    # - tls_cert_file: PEM-encoded certificate (chain) path.
+    # - tls_key_file:  PEM-encoded private key path.
+    # If both are set the edge serves HTTPS on `port`. If neither is set the edge
+    # serves plain HTTP (local/loopback, or behind an external TLS-terminating
+    # ingress). Setting exactly one of them raises (fail closed).
+    tls_cert_file: str | None = None
+    tls_key_file: str | None = None
+
+    @property
+    def tls_enabled(self) -> bool:
+        return self.tls_cert_file is not None and self.tls_key_file is not None
 
     @classmethod
     def from_env(cls) -> "EdgeSettings":
@@ -114,6 +134,20 @@ class EdgeSettings:
         if timeout <= 0:
             timeout = 120.0
 
+        tls_cert = (os.getenv("EDGE_TLS_CERT_FILE") or "").strip() or None
+        tls_key = (os.getenv("EDGE_TLS_KEY_FILE") or "").strip() or None
+        if (tls_cert is None) != (tls_key is None):
+            raise ValueError(
+                "EDGE_TLS_CERT_FILE and EDGE_TLS_KEY_FILE must be set together "
+                "or both left unset; setting only one is a configuration error."
+            )
+        for label, path in (("cert", tls_cert), ("key", tls_key)):
+            if path is not None and not os.path.isfile(path):
+                raise ValueError(
+                    f"EDGE_TLS_{'CERT' if label == 'cert' else 'KEY'}_FILE "
+                    f"points to a file that does not exist or is not readable: {path!r}"
+                )
+
         return cls(
             upstream_url=upstream,
             host=host,
@@ -122,6 +156,8 @@ class EdgeSettings:
             static_tokens=static_tokens,
             max_request_bytes=max_bytes,
             upstream_timeout_seconds=timeout,
+            tls_cert_file=tls_cert,
+            tls_key_file=tls_key,
         )
 
 
@@ -135,7 +171,11 @@ def make_settings(
     static_tokens: list[str] | None = None,
     max_request_bytes: int = 2 * 1024 * 1024,
     upstream_timeout_seconds: float = 120.0,
+    tls_cert_file: str | None = None,
+    tls_key_file: str | None = None,
 ) -> EdgeSettings:
+    if (tls_cert_file is None) != (tls_key_file is None):
+        raise ValueError("tls_cert_file and tls_key_file must be set together or both unset")
     return EdgeSettings(
         upstream_url=upstream_url,
         host=host,
@@ -144,6 +184,8 @@ def make_settings(
         static_tokens=tuple(static_tokens or ()),
         max_request_bytes=max_request_bytes,
         upstream_timeout_seconds=upstream_timeout_seconds,
+        tls_cert_file=tls_cert_file,
+        tls_key_file=tls_key_file,
     )
 
 
