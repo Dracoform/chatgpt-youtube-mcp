@@ -1,6 +1,6 @@
 [project]
 name = "youtube-current-data-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Read-only YouTube data bridge for ChatGPT and other MCP clients"
 readme = "README.md"
 license = "Apache-2.0"

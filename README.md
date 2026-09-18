@@ -28,7 +28,7 @@ GitHub Actions tests the project and publishes a public multi-architecture image
 ghcr.io/dracoform/chatgpt-youtube-mcp:latest
 ```
 
-Versioned releases use Git tags such as `v0.1.0` and publish the corresponding `0.1.0` and `0.1` image tags. After the first workflow run, the package visibility must be changed to **Public** once in the GitHub package settings; repository visibility and package visibility are separate settings.
+Versioned releases use Git tags such as `v0.2.0` and publish the corresponding `0.2.0` and `0.2` image tags. After the first workflow run, the package visibility must be changed to **Public** once in the GitHub package settings; repository visibility and package visibility are separate settings.
 
 ## OpenAI Secure MCP Tunnel wrapper
 
@@ -226,5 +226,8 @@ Where useful, responses expose provenance describing which upstream source produ
 
 * Google OAuth for personal subscriptions is not included in v0.1. It needs a real per-user authorization broker, not a token pasted into the model.
 * Transcript retrieval for third-party videos is necessarily unofficial. YouTube Data API v3 only permits caption download when the caller can edit the video.
-* A public plugin submission needs a stable public HTTPS deployment. Developer-mode testing can use OpenAI Secure MCP Tunnel instead.
+* A public plugin submission needs a stable public HTTPS deployment. The
+  project now provides a supported public HTTPS path (the static-Bearer and
+  OAuth edge; see `docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md`), while
+  developer-mode testing can use the OpenAI Secure MCP Tunnel.
 * The yt-dlp self-updater is an opt-in, unaudited-by-you code path intended for rapid recovery when YouTube changes break extraction. It is disabled by default, and the bundled image version remains the trusted baseline.
