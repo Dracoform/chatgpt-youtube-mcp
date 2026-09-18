@@ -8,6 +8,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     # Writable state volume for the optional staged yt-dlp updater (Phase 2).
@@ -15,6 +17,108 @@ services:
     # writes here. The named volume is the one writable path under read_only.
     volumes:
       - ytdlp-state:/app/state
+
+  # Public Remote MCP edge (Stage 0/1): static Bearer auth + Streamable HTTP
+  # proxy to the private core above. Optional: enabled with
+  #   docker compose --profile edge up
+  # The edge is the intended future public exposure point; by default it also
+  # binds loopback-only locally. It is built from the same image (which ships
+  # the `youtube-mcp-edge` console script). Tokens come from EDGE_STATIC_TOKENS
+  # in .env (never committed); with EDGE_STATIC_AUTH_ENABLED (default true) but
+  # no tokens configured, the edge refuses to start (fail closed).
+  youtube-mcp-edge:
+    profiles: ["edge"]
+    build: .
+    entrypoint: ["youtube-mcp-edge"]
+    restart: unless-stopped
+    environment:
+      EDGE_MCP_UPSTREAM_URL: http://youtube-mcp:8765/mcp
+      EDGE_HOST: 0.0.0.0
+      EDGE_PORT: "8766"
+      EDGE_STATIC_AUTH_ENABLED: "${EDGE_STATIC_AUTH_ENABLED:-true}"
+      EDGE_STATIC_TOKENS: "${EDGE_STATIC_TOKENS:-}"
+      EDGE_MAX_REQUEST_BYTES: "${EDGE_MAX_REQUEST_BYTES:-2097152}"
+    ports:
+      - "127.0.0.1:8766:8766"
+    depends_on:
+      youtube-mcp:
+        condition: service_healthy
+    healthcheck:
+      # The image HEALTHCHECK probes the CORE's /healthz on 8765; the edge
+      # serves its own /healthz on 8766, so override it for this service.
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8766/healthz', timeout=2).status == 200 else 1)"
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 12
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  # Public static-auth HTTPS edge (Stage 2). Optional: enabled with
+  #   docker compose --profile edge-public up
+  # This is the PUBLIC HTTPS deployment path: the edge terminates TLS with
+  # operator-provided cert/key files and validates static Bearer credentials
+  # before forwarding to the private core. The core stays private; only the
+  # edge publishes a host port. To instead terminate TLS with an existing
+  # ingress (Caddy/nginx/Traefik), leave EDGE_TLS_* unset and forward the
+  # ingress to the plain-HTTP edge (EDGE_PUBLIC_PORT).
+  youtube-mcp-edge-public:
+    profiles: ["edge-public"]
+    build: .
+    entrypoint: ["youtube-mcp-edge"]
+    restart: unless-stopped
+    environment:
+      EDGE_MCP_UPSTREAM_URL: http://youtube-mcp:8765/mcp
+      EDGE_HOST: 0.0.0.0
+      EDGE_PORT: "${EDGE_PUBLIC_PORT:-8766}"
+      EDGE_STATIC_AUTH_ENABLED: "${EDGE_STATIC_AUTH_ENABLED:-true}"
+      EDGE_STATIC_TOKENS: "${EDGE_STATIC_TOKENS:-}"
+      EDGE_MAX_REQUEST_BYTES: "${EDGE_MAX_REQUEST_BYTES:-2097152}"
+      EDGE_TLS_CERT_FILE: "${EDGE_TLS_CERT_FILE:-/certs/tls.crt}"
+      EDGE_TLS_KEY_FILE: "${EDGE_TLS_KEY_FILE:-/certs/tls.key}"
+    volumes:
+      # Operator must place a PEM cert chain and private key here (e.g.
+      # ./edge-certs/tls.crt and ./edge-certs/tls.key). Mounted read-only.
+      - "${EDGE_TLS_DIR:-./edge-certs}:/certs:ro"
+    ports:
+      # Configurable public HTTPS host bind + port -> container EDGE_PORT (HTTPS).
+      # Safe default: bind only host loopback (127.0.0.1) so the port is not
+      # exposed beyond this host. To make the edge genuinely public (the
+      # intended purpose of this profile once TLS + static/OAuth auth are in
+      # place), set EDGE_PUBLIC_BIND_ADDRESS to 0.0.0.0 (or a specific
+      # interface) in .env. 0.0.0.0 is deliberately NOT the silent default.
+      - "${EDGE_PUBLIC_BIND_ADDRESS:-127.0.0.1}:${EDGE_PUBLIC_HTTPS_PORT:-8443}:${EDGE_PUBLIC_PORT:-8766}"
+    depends_on:
+      youtube-mcp:
+        condition: service_healthy
+    healthcheck:
+      # Edge serves /healthz on its HTTPS listener; probe it with an unverified
+      # TLS context (self-signed or operator certs) to prove the listener is up.
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import ssl,sys,urllib.request; c=ssl._create_unverified_context(); sys.exit(0 if urllib.request.urlopen('https://127.0.0.1:${EDGE_PUBLIC_PORT:-8766}/healthz', timeout=2, context=c).status == 200 else 1)"
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 12
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   ytdlp-state:

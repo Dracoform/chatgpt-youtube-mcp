@@ -1,0 +1,37 @@
+{
+  "mcp": {
+    "tag": "latest",
+    "youtube_api_key": "",
+    "enable_ytdlp": false,
+    "languages": "de,en",
+    "max_chars": "60000"
+  },
+  "access": [
+    "tunnel"
+  ],
+  "tunnel": {
+    "tag": "0.9.8",
+    "tunnel_id": "tunnel_0123456789abcdef0123456789abcdef",
+    "runtime_api_key": "sk-equivalence-test-key",
+    "http_proxy": "http://proxy:3128"
+  },
+  "edge": {
+    "enabled": false,
+    "auth_modes": [],
+    "tls": "ingress",
+    "public_port": "8443",
+    "cert_file": "",
+    "key_file": "",
+    "static_token_prefix": "ytsk_",
+    "static_tokens": [],
+    "oauth": {
+      "issuer": "",
+      "resource": "",
+      "audience": "",
+      "required_scope": "",
+      "jwks_url": "",
+      "authorization_servers": "",
+      "scopes_supported": ""
+    }
+  }
+}

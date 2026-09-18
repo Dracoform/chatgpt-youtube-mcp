@@ -28,7 +28,7 @@ GitHub Actions tests the project and publishes a public multi-architecture image
 ghcr.io/dracoform/chatgpt-youtube-mcp:latest
 ```
 
-Versioned releases use Git tags such as `v0.1.0` and publish the corresponding `0.1.0` and `0.1` image tags. After the first workflow run, the package visibility must be changed to **Public** once in the GitHub package settings; repository visibility and package visibility are separate settings.
+Versioned releases use Git tags such as `v0.2.0` and publish the corresponding `0.2.0` and `0.2` image tags. After the first workflow run, the package visibility must be changed to **Public** once in the GitHub package settings; repository visibility and package visibility are separate settings.
 
 ## OpenAI Secure MCP Tunnel wrapper
 
@@ -68,7 +68,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/INTERFACE.md](docs/INTER
 
 For a guided Portainer Web Editor stack, use the hosted web generator at **https://dracoform.github.io/chatgpt-youtube-mcp/** — it runs entirely client-side in your browser: no values are uploaded, submitted, or persisted by the application, and it makes no network requests after loading. The generated YAML is displayed for copy/paste into Portainer; nothing is downloaded.
 
-The Bash (`generators/generate_docker-compose_for_ChatGPT_MCP.sh`) and PowerShell (`generators/generate_docker-compose_for_ChatGPT_MCP.ps1`) generators remain available as offline alternatives — all three produce the same stack. See [docs/PORTAINER_STACK_GENERATORS.md](docs/PORTAINER_STACK_GENERATORS.md).
+The generators are **capability-oriented**: you pick the access methods you want (OpenAI Secure MCP Tunnel, public static-Bearer edge, public OAuth edge, local loopback) and the stack is composed accordingly. See [docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md](docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md) for the access-method matrix and working client configs for ChatGPT/OpenAI, Claude, LibreChat, DeepSeek Harness, and local MCP clients. The Bash (`generators/generate_docker-compose_for_ChatGPT_MCP.sh`) and PowerShell (`generators/generate_docker-compose_for_ChatGPT_MCP.ps1`) generators remain available as offline alternatives — all three (web, Bash, PowerShell) produce the same stack for the same choices. See [docs/PORTAINER_STACK_GENERATORS.md](docs/PORTAINER_STACK_GENERATORS.md).
 
 ## Transcript sizing and pagination
 
@@ -224,7 +224,10 @@ Where useful, responses expose provenance describing which upstream source produ
 
 ## Deliberate PoC limits
 
-* Google OAuth for personal subscriptions is not included in v0.1. It needs a real per-user authorization broker, not a token pasted into the model.
+* Google OAuth for personal subscriptions is not included in this release. It needs a real per-user authorization broker, not a token pasted into the model.
 * Transcript retrieval for third-party videos is necessarily unofficial. YouTube Data API v3 only permits caption download when the caller can edit the video.
-* A public plugin submission needs a stable public HTTPS deployment. Developer-mode testing can use OpenAI Secure MCP Tunnel instead.
+* A public plugin submission needs a stable public HTTPS deployment. The
+  project now provides a supported public HTTPS path (the static-Bearer and
+  OAuth edge; see `docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md`), while
+  developer-mode testing can use the OpenAI Secure MCP Tunnel.
 * The yt-dlp self-updater is an opt-in, unaudited-by-you code path intended for rapid recovery when YouTube changes break extraction. It is disabled by default, and the bundled image version remains the trusted baseline.

@@ -7,3 +7,4 @@ dist/
 upload/
 *.zip
 portainer-*-stack.yml
+edge-certs/
