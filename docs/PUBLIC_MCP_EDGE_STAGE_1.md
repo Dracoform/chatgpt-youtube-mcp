@@ -1,9 +1,12 @@
 # Public Remote MCP edge — Stage 0/1 (static Bearer auth)
 
 Status: Stage 0 (edge scaffold) + Stage 1 (static Bearer authentication) of the
-multi-client MCP work. OAuth, TLS-termination implementation, and full public
-deployment UX are deliberately out of scope here (see
-`docs/MULTI_CLIENT_MCP_PHASE1_ARCHITECTURE.md`).
+multi-client MCP work — the historical baseline of the edge. OAuth and
+TLS-termination implementation landed later: TLS in Stage 2
+(`docs/PUBLIC_MCP_EDGE_STAGE_2.md`) and OAuth Resource-Server support in Stage 3
+(`docs/PUBLIC_MCP_EDGE_STAGE_3.md`). This document describes the Stage 0/1 core
+behavior; readers planning a new deployment should prefer
+`docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md` and the later stage docs.
 
 ## What this is
 
@@ -35,8 +38,8 @@ OpenAI tunnel ─────────► ──────────┘  
 | Multiple tokens / rotation | Implemented (configure several; remove old after migration) |
 | Constant-time token comparison | Implemented (SHA-256 digests + `hmac.compare_digest`) |
 | Upstream failure treatment | Returns 502 |
-| TLS termination | **Not** implemented in the edge (Phase 1: TLS MUST terminate before public traffic; pair with a reverse proxy/ingress or add later) |
-| OAuth | **Not** implemented (Phase 2) |
+| TLS termination | Implemented as of Stage 2 (`docs/PUBLIC_MCP_EDGE_STAGE_2.md`) — edge-terminated TLS with operator cert/key, or external ingress | 
+| OAuth | Implemented as of Stage 3 (`docs/PUBLIC_MCP_EDGE_STAGE_3.md`) — access-token JWT/JWKS validation against a separate Authorization Server, RFC 9728 protected-resource metadata, 401/WWW-Authenticate discovery | 
 | `X-API-Key` | **Not** enabled (optional future compatibility) |
 
 ## Configuration
@@ -108,19 +111,23 @@ uv run python -m unittest discover -s tests -v   # full suite
 
 ## Security notes
 
-- The edge is the intended **future public exposure point**, but Stage 0/1 does
-  not implement TLS. Phase 1 requires TLS to be terminated before public traffic
-  reaches the protected MCP resource — either at the edge (later stage) or by an
-  existing reverse proxy/ingress in front of it.
+- TLS is now supported as of Stage 2 (`docs/PUBLIC_MCP_EDGE_STAGE_2.md`): the
+  edge can terminate TLS itself with operator-provided cert/key files, or an
+  existing reverse proxy/ingress may terminate TLS in front of it. For any
+  public deployment, TLS MUST terminate before the protected MCP resource is
+  reached. Stage 0/1 by itself does not add TLS.
 - The edge never emits the credential; logs record method, path, status, outcome,
   client, and elapsed time only.
 - Typical token format: use a long, high-entropy random value, optionally with a
-  `ytsk_` prefix to leave an unambiguous namespace for future OAuth access-token
-  coexistence (see Phase 1 §9).
+  `ytsk_` prefix to leave an unambiguous namespace for OAuth access-token
+  coexistence (see `docs/MULTI_CLIENT_MCP_STAGE_2_5_AUTH_SERVER.md`).
 
-## Out of scope (later phases)
+## Later stages (superseding the original scope notes)
 
-- OAuth / Authorization Server (Phase 2).
-- TLS termination / certificate automation (Phase 2).
-- `X-API-Key` (optional future compatibility).
-- Full Compose/generator capability branching (Phase 2).
+- OAuth / Authorization Server: implemented as of Stage 3
+  (`docs/PUBLIC_MCP_EDGE_STAGE_3.md`); the edge acts as OAuth Resource Server.
+- TLS termination / certificate automation: TLS termination implemented as of
+  Stage 2; certificate *automation* (ACME) remains out of scope.
+- `X-API-Key` remains an optional, not-enabled future compatibility item.
+- Full Compose/generator capability branching: implemented as of Stage 4
+  (`docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md`).

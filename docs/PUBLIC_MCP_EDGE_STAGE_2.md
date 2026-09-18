@@ -4,11 +4,11 @@ Status: Stage 2 of the multi-client MCP work. This stage turns the Stage 0/1
 static-auth edge into a **supported public HTTPS deployment path** and verifies
 it with real client tooling.
 
-> **OAuth / Claude-standard path is NOT implemented yet.** This stage delivers
-> static `Authorization: Bearer <token>` authentication only. Claude / claude.ai
-> Custom Connectors depend on the OAuth flow (Claude request-header auth is a
-> beta/gradual-rollout feature) and therefore cannot yet treat this endpoint as a
-> production connector. That is Phase 2 later-stage work.
+> **OAuth was added in a later stage.** This stage delivers static
+> `Authorization: Bearer *** authentication only. OAuth Resource-Server support
+> (the Claude / claude.ai Custom Connector path) landed in Stage 3 — see
+> `docs/PUBLIC_MCP_EDGE_STAGE_3.md`. For a new deployment, prefer the
+> capability-oriented generators and `docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md`.
 
 ## Topology
 
@@ -192,9 +192,12 @@ Real-container E2E against the `edge-public` profile:
 - See `docs/MULTI_CLIENT_MCP_PHASE1_ARCHITECTURE.md` for the wider OAuth /
   capability matrix roadmap.
 
-## Out of scope in Stage 2 (later phases)
+## Later stages (superseding the Stage-2 scope notes)
 
-- OAuth / Authorization Server integration (Claude-standard path).
-- Certificate issuance / ACME automation.
-- Full Phase 1 capability matrix and generator capability branching.
-- `X-API-Key`.
+- OAuth / Authorization Server integration (Claude-standard path): implemented
+  as of Stage 3 (`docs/PUBLIC_MCP_EDGE_STAGE_3.md`).
+- Full Phase 1 capability matrix and generator capability branching:
+  implemented as of Stage 4 (`docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md`).
+- Certificate issuance / ACME automation: still out of scope (operator provides
+  cert/key, or an external ingress terminates TLS).
+- `X-API-Key`: still an optional, not-enabled future compatibility item.

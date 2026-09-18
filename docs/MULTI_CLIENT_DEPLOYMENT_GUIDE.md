@@ -200,3 +200,42 @@ The interactive flow is:
   collisions.
 - Claude/LibreChat/DeepSeek live-client connectors remain account/instance-gated
   (details above); config semantics validated against vendor sources.
+
+## Troubleshooting common failures
+
+- **`docker compose up` fails validation ("must be a mapping" / unknown key).**
+  You are mixing a generator-produced stack with the repo's root `compose.yaml`.
+  The generators emit a *standalone* compose file — deploy it in its own
+  directory; do not merge it into the repo's `compose.yaml`. Use
+  `docker compose -f generated.yml config --quiet` to validate before deploying.
+- **Edge refuses to start (fail closed).** With `EDGE_STATIC_AUTH_ENABLED=true`
+  (default) and no `EDGE_STATIC_TOKENS`, the edge exits at startup. Set at least
+  one token, or disable static auth only if you are using OAuth. Check the edge
+  logs: `docker compose logs youtube-mcp-edge`.
+- **Public edge with neither static nor OAuth is rejected.** The generators
+  refuse to render a public edge with no auth — pick static, OAuth, or both.
+- **TLS half-configuration error.** Set *both* `EDGE_TLS_CERT_FILE` and
+  `EDGE_TLS_KEY_FILE`, or neither. Setting only one is a startup error. For the
+  `edge-public` profile, place `tls.crt`/`tls.key` under `EDGE_TLS_DIR`
+  (default `./edge-certs`) and ensure the files are readable by the container
+  user (uid 65532).
+- **OAuth tokens rejected with 401.** Confirm `EDGE_OAUTH_ISSUER` matches the
+  issuer of the tokens (`iss` claim), `EDGE_OAUTH_AUDIENCE`/resource matches the
+  token `aud`/`resource`, and the token carries `EDGE_OAUTH_REQUIRED_SCOPE`.
+  Verify the AS's JWKS is reachable from the edge container (the edge caches it;
+  a JWKS outage causes 401 until it refreshes). Check the edge log for the
+  specific rejection reason.
+- **Claude connector fails to discover OAuth.** The edge advertises OAuth via
+  the RFC 9728 `/.well-known/oauth-protected-resource` endpoint and 401
+  `WWW-Authenticate`. Ensure the AS supports the discovery/DCR flow Claude
+  expects and that `EDGE_OAUTH_RESOURCE_IDENTIFIER` is the public HTTPS MCP URL.
+- **`406 Not Acceptable` through the edge.** The MCP core requires
+  `Accept: application/json`. If a raw HTTP probe returns 406, that is the core
+  negotiating content type — not an edge auth failure. Use a real MCP client
+  (which sends the correct `Accept`) for validation.
+- **Transcript truncated at 60k / 120k chars.** That is the configured
+  page/hard cap. Use pagination (opaque continuation tokens) to retrieve longer
+  transcripts; raise `YOUTUBE_TRANSCRIPT_MAX_CHARS`/`HARD_MAX_CHARS` if desired.
+- **`yt-dlp` blocked or rate-limited.** Extraction is best-effort; the
+  official APIs (`YOUTUBE_API_KEY`) are preferred and more reliable. Set
+  `YOUTUBE_ENABLE_YTDLP=false` if you must disable unofficial extraction.

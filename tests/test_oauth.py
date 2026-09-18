@@ -331,6 +331,41 @@ class OAuthJwtSecurityTests(unittest.TestCase):
                                     "authorization": f"Bearer {tok}"})
         self.assertEqual(resp.status_code, 401)
 
+    def test_as_outage_jwks_unreachable_fails_closed(self):
+        # Authorization-Server outage: the JWKS endpoint is unreachable. The
+        # edge must reject with 401 (never fail-open), and never forward the
+        # request upstream.
+        as_ = FakeAS()
+
+        def outage_handler(request: httpx.Request) -> httpx.Response:
+            if "certs" in str(request.url):
+                raise httpx.ConnectError("AS unreachable", request=request)
+            # issuer metadata still reachable (or also down — either way 401)
+            return httpx.Response(200, json=as_.issuer_doc())
+
+        upstream = FakeUpstream()
+        settings = _oauth_settings()
+        app = EdgeApp(
+            settings,
+            upstream_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(upstream.handler),
+                timeout=httpx.Timeout(5.0),
+            ),
+            oauth_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(outage_handler),
+                timeout=httpx.Timeout(5.0),
+            ),
+        )
+        client = TestClient(app.asgi())
+        tok = as_.make_token()
+        resp = client.post("/mcp", content=b"{}",
+                           headers={"content-type": "application/json",
+                                    "authorization": f"Bearer {tok}"})
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(len(upstream.requests), 0)  # never forwarded
+        # fail-closed: a valid token must NOT be accepted during an AS outage
+        self.assertNotEqual(resp.status_code, 200)
+
 
 class OAuthMetadataTests(unittest.TestCase):
     def setUp(self):

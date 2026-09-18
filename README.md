@@ -68,7 +68,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/INTERFACE.md](docs/INTER
 
 For a guided Portainer Web Editor stack, use the hosted web generator at **https://dracoform.github.io/chatgpt-youtube-mcp/** — it runs entirely client-side in your browser: no values are uploaded, submitted, or persisted by the application, and it makes no network requests after loading. The generated YAML is displayed for copy/paste into Portainer; nothing is downloaded.
 
-The Bash (`generators/generate_docker-compose_for_ChatGPT_MCP.sh`) and PowerShell (`generators/generate_docker-compose_for_ChatGPT_MCP.ps1`) generators remain available as offline alternatives — all three produce the same stack. See [docs/PORTAINER_STACK_GENERATORS.md](docs/PORTAINER_STACK_GENERATORS.md).
+The generators are **capability-oriented**: you pick the access methods you want (OpenAI Secure MCP Tunnel, public static-Bearer edge, public OAuth edge, local loopback) and the stack is composed accordingly. See [docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md](docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md) for the access-method matrix and working client configs for ChatGPT/OpenAI, Claude, LibreChat, DeepSeek Harness, and local MCP clients. The Bash (`generators/generate_docker-compose_for_ChatGPT_MCP.sh`) and PowerShell (`generators/generate_docker-compose_for_ChatGPT_MCP.ps1`) generators remain available as offline alternatives — all three (web, Bash, PowerShell) produce the same stack for the same choices. See [docs/PORTAINER_STACK_GENERATORS.md](docs/PORTAINER_STACK_GENERATORS.md).
 
 ## Transcript sizing and pagination
 

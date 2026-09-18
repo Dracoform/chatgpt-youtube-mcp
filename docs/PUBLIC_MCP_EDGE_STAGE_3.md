@@ -206,7 +206,7 @@ fail-closed.
 ## Out of scope / later phases
 
 - RFC 7662 opaque-token introspection (extension point exists).
-- Realm-wide OAuth-capable capability matrix and generator capability branching
-  (Stage 4).
+- Capability matrix and generator capability branching: implemented as of Stage 4
+  (`docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md`).
 - Real claude.ai / live LibreChat connector E2E (account/public-endpoint gated).
 - Certificate automation / ACME (as in Stage 2).

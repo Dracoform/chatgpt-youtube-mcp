@@ -157,6 +157,115 @@ class TestBashGenerator(unittest.TestCase):
         self.assertTrue(SH_GENERATOR.read_text(errors="replace").isascii())
 
 
+class TestBashGeneratorInteractiveSecretMasking(unittest.TestCase):
+    """Interactive secret-masking/confirmation UX of the Bash generator (Stage 5).
+
+    Drives the REAL Bash generator's interactive flow (not --input) with a piped
+    answer queue. This closes the Stage-4 coverage gap: the interactive
+    masked-confirmation path (secret entered is never echoed, shown as a
+    length-preserving mask ending in the final four chars, and must be
+    confirmed) is now directly exercised.
+    """
+
+    # --output minimum: mcp_tag, languages, max_chars, youtube key (+confirm),
+    # yt-dlp(no -> skips consent), access '2'=tunnel, tunnel_tag(default),
+    # tunnel_id, runtime key (+confirm), proxy(empty).
+    TUNNEL_QUEUE = [
+        "", "", "",                               # mcp_tag, languages, max_chars
+        "", "y",                                  # youtube key empty -> confirm continue
+        "n",                                      # yt-dlp off (skip consent)
+        "2",                                      # access = tunnel
+        "",                                       # tunnel_tag (default)
+        VALID_ID,                                 # tunnel id
+    ]
+
+    def run_interactive(self, runtime_key, confirm="y", extra=None):
+        queue = list(self.TUNNEL_QUEUE) + [runtime_key, confirm]
+        if extra:
+            queue += list(extra)
+        queue += [""]  # proxy (optional, empty)
+        out = tempfile.mktemp(suffix=".yml")
+        r = subprocess.run(
+            [str(SH_GENERATOR), "--output", out],
+            input="\n".join(queue) + "\n",
+            capture_output=True, text=True, timeout=30,
+        )
+        return out, r
+
+    def test_secret_never_echoed_then_confirmed_and_masked(self):
+        out, r = self.run_interactive(RUNTIME_KEY)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        all_out = r.stdout + r.stderr
+        # the full secret must not appear anywhere in output
+        self.assertNotIn(RUNTIME_KEY, all_out)
+        self.assertNotIn("sk-", all_out)  # not even the prefix/sk- sequence
+        # the mask line is shown with the final four chars
+        self.assertIn("OpenAI Runtime API key empfangen:", r.stderr)
+        self.assertIn(RUNTIME_KEY[-4:], r.stderr)
+        self.assertIn(f"Laenge: {len(RUNTIME_KEY)} Zeichen", r.stderr)
+        # the confirmed secret lands in the generated YAML
+        doc = parse_yaml(out)
+        self.assertEqual(
+            doc["services"]["openai-tunnel"]["environment"]["CONTROL_PLANE_API_KEY"],
+            RUNTIME_KEY,
+        )
+
+    def test_rejected_confirmation_repeats_entry(self):
+        # Confirm "n" -> re-enter; second attempt confirmed.
+        out, r = self.run_interactive(
+            RUNTIME_KEY,
+            confirm="n",
+            extra=[RUNTIME_KEY, "y"],
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # mask shown twice (rejected then accepted)
+        self.assertEqual(r.stderr.count("OpenAI Runtime API key empfangen:"), 2)
+        doc = parse_yaml(out)
+        self.assertEqual(
+            doc["services"]["openai-tunnel"]["environment"]["CONTROL_PLANE_API_KEY"],
+            RUNTIME_KEY,
+        )
+
+    def test_control_char_secret_rejected(self):
+        # A value containing a control character must be rejected and re-prompted.
+        # After rejection the generator re-reads the replacement secret, then a
+        # confirm line. Queue: bad -> rejected -> replacement secret -> 'y'.
+        bad = "sk-" + "\t" + "a"
+        queue = list(self.TUNNEL_QUEUE) + [bad, RUNTIME_KEY, "y", ""]
+        out = tempfile.mktemp(suffix=".yml")
+        r = subprocess.run(
+            [str(SH_GENERATOR), "--output", out],
+            input="\n".join(queue) + "\n",
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Steuerzeichen", r.stderr)
+        doc = parse_yaml(out)
+        self.assertEqual(
+            doc["services"]["openai-tunnel"]["environment"]["CONTROL_PLANE_API_KEY"],
+            RUNTIME_KEY,
+        )
+
+    def test_youtube_key_mask_uses_final_four(self):
+        # Reuse the youtube-key secret-mask prompt: it prints e.g. XXXX...cdef.
+        YK = YOUTUBE_KEY
+        queue = ["", "", "", YK, "y", "n", "2", "", VALID_ID,
+                 RUNTIME_KEY, "y", ""]
+        out = tempfile.mktemp(suffix=".yml")
+        r = subprocess.run(
+            [str(SH_GENERATOR), "--output", out],
+            input="\n".join(queue) + "\n",
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn(YK, r.stdout + r.stderr)
+        self.assertIn("YouTube API key empfangen:", r.stderr)
+        self.assertIn(YK[-4:], r.stderr)
+        doc = parse_yaml(out)
+        self.assertEqual(
+            doc["services"]["youtube-mcp"]["environment"]["YOUTUBE_API_KEY"], YK)
+
+
 class TestPowerShellGeneratorStatic(unittest.TestCase):
     """Static checks on the capability-oriented PowerShell generator."""
 
