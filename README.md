@@ -42,6 +42,12 @@ Status: the wrapper is live-validated — the complete ChatGPT → Secure MCP Tu
 
 ## Quick start
 
+New to the project or unsure which access method to use?
+
+Start with the **[User Guide](docs/USER_GUIDE.md)** if you are choosing between ChatGPT/OpenAI, Claude, LibreChat, DeepSeek Harness, or local MCP clients. It walks through deployment modes, authentication, HTTPS, client setup, troubleshooting, and updates.
+
+For the simplest local/core-only start:
+
 ```bash
 cp .env.example .env
 # Add YOUTUBE_API_KEY to .env for official metadata/channel/search/playlist calls.
@@ -226,8 +232,5 @@ Where useful, responses expose provenance describing which upstream source produ
 
 * Google OAuth for personal subscriptions is not included in this release. It needs a real per-user authorization broker, not a token pasted into the model.
 * Transcript retrieval for third-party videos is necessarily unofficial. YouTube Data API v3 only permits caption download when the caller can edit the video.
-* A public plugin submission needs a stable public HTTPS deployment. The
-  project now provides a supported public HTTPS path (the static-Bearer and
-  OAuth edge; see `docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md`), while
-  developer-mode testing can use the OpenAI Secure MCP Tunnel.
+* A public plugin submission needs a stable public HTTPS deployment. The project now provides a supported public HTTPS path (the static-Bearer and OAuth edge; see [docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md](docs/MULTI_CLIENT_DEPLOYMENT_GUIDE.md)), while developer-mode testing can use the OpenAI Secure MCP Tunnel.
 * The yt-dlp self-updater is an opt-in, unaudited-by-you code path intended for rapid recovery when YouTube changes break extraction. It is disabled by default, and the bundled image version remains the trusted baseline.
