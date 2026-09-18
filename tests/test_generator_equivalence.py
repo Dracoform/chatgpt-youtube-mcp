@@ -1,11 +1,17 @@
-"""Executable PowerShell-vs-Bash generator equivalence test.
+"""Three-way generator equivalence test (Stage 4).
 
-Runs both generators with identical answers and compares the generated
-YAML structurally. Requires pwsh; skipped when PowerShell is unavailable
-(local dev machines without pwsh run the static tests instead; CI's
-ubuntu runner has pwsh and executes this file).
+Runs the REAL Bash and PowerShell generators (in non-interactive `--input`
+mode) and the REAL Web generator (buildYaml via node), and compares their output
+byte-for-byte against generators/canonical_model.py — the single source of
+truth — for the representative canonical inputs in tests/fixtures/:
+
+  tunnel-only, static-public, oauth-public, static-oauth, tunnel-static-oauth, local
+
+Requires bash + node always; pwsh when available (CI ubuntu runners; local
+hosts without pwsh skip the PowerShell arm).
 """
 
+import json
 import shutil
 import subprocess
 import tempfile
@@ -13,194 +19,171 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+FIXTURES_DIR = REPO / "tests" / "fixtures"
 SH_GENERATOR = REPO / "generators" / "generate_docker-compose_for_ChatGPT_MCP.sh"
 PS1_GENERATOR = REPO / "generators" / "generate_docker-compose_for_ChatGPT_MCP.ps1"
+WEB_GENERATOR = REPO / "docs" / "assets" / "generator.js"
 
-# Same answers for both generators, in prompt order:
-# mcp_tag, tunnel_tag, youtube_api_key, ytdlp_enable, consent,
-# languages, max_chars, tunnel_id, runtime_key, proxy
-# Prompt order (both generators):
-# mcp tag, tunnel tag, youtube key, key confirm, yt-dlp enable (no -> no
-# consent prompt), languages, max chars, tunnel id, runtime key, key
-# confirm, proxy, proxy confirm.
-ANSWERS = [
-    "0.9.9",            # mcp tag (non-default to catch dropped prompts)
-    "0.9.8",            # tunnel tag
-    "AIza" + "SyA1234567890" + "abcdefghijklmnopqrstuv",   # 39-char key
-    "y",                # key confirm
-    "n",                # disable yt-dlp (skips consent prompt)
-    "de,en,fr",         # languages
-    "120000",           # max chars
-    "tunnel_0123456789abcdef0123456789abcdef",
-    "s" + "k-equivalence-test-key",   # starts with recognized prefix
-    "y",                # key confirm
-    "http://proxy:3128",  # proxy
-    "y",                # proxy confirm
+# Canonical inputs that must produce identical YAML across all generators.
+CASES = [
+    "tunnel-only",
+    "static-public",
+    "oauth-public",
+    "static-oauth",
+    "tunnel-static-oauth",
+    "local",
 ]
 
-VALID_ID = "tunnel_0123456789abcdef0123456789abcdef"
+
+def _secrets_for(fixture):
+    fx = json.loads((FIXTURES_DIR / f"{fixture}.json").read_text())
+    secrets = [fx.get("mcp", {}).get("youtube_api_key", "")]
+    tun = fx.get("tunnel") or {}
+    secrets.append(tun.get("runtime_api_key", ""))
+    secrets += list((fx.get("edge") or {}).get("static_tokens", []))
+    return [s for s in secrets if s]
+
+
+def _redact(text, secrets):
+    out = str(text)
+    for s in secrets:
+        if s:
+            out = out.replace(s, "***REDACTED***")
+    return out
+
+
+def oracle(fixture):
+    """Render the reference YAML."""
+    import sys
+    sys.path.insert(0, str(REPO))
+    from generators.canonical_model import render
+    return render(str(FIXTURES_DIR / f"{fixture}.json"))
+
+
+def run_bash(fixture, out_path):
+    secrets = _secrets_for(fixture)
+    try:
+        r = subprocess.run(
+            ["bash", str(SH_GENERATOR),
+             "--input", str(FIXTURES_DIR / f"{fixture}.json"),
+             "--output", str(out_path)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            f"bash timeout for {fixture}:\n"
+            f"{_redact((exc.stdout or '') + (exc.stderr or ''), secrets)}"
+        ) from None
+    if r.returncode != 0:
+        raise AssertionError(
+            f"bash failed for {fixture} (rc={r.returncode}): "
+            f"{_redact(r.stdout + r.stderr, secrets)}")
+    return Path(out_path).read_text()
+
+
+def run_pwsh(fixture, out_path):
+    secrets = _secrets_for(fixture)
+    script = (
+        f"Set-Location '{REPO}'; "
+        f"& '{PS1_GENERATOR}' -InputPath '{FIXTURES_DIR / (fixture + '.json')}' "
+        f"-OutputPath '{out_path}'; exit $LASTEXITCODE"
+    )
+    try:
+        r = subprocess.run(
+            ["pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, timeout=40,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            f"pwsh timeout for {fixture}:\n"
+            f"{_redact((exc.stdout or '') + (exc.stderr or ''), secrets)}"
+        ) from None
+    if r.returncode != 0:
+        raise AssertionError(
+            f"pwsh failed for {fixture} (rc={r.returncode}): "
+            f"{_redact(r.stdout + r.stderr, secrets)}")
+    return Path(out_path).read_text()
+
+
+def run_web(fixture):
+    """Drive the web generator's buildYaml with the fixture object via node."""
+    secrets = _secrets_for(fixture)
+    script = f"""
+'use strict';
+const fs = require('fs');
+const gen = require({str(WEB_GENERATOR)!r});
+const fx = JSON.parse(fs.readFileSync({str(FIXTURES_DIR / (fixture + '.json'))!r}, 'utf8'));
+process.stdout.write(gen.buildYaml(fx));
+"""
+    try:
+        r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired as exc:
+        raise AssertionError(
+            f"node timeout for {fixture}:\n"
+            f"{_redact((exc.stdout or '') + (exc.stderr or ''), secrets)}"
+        ) from None
+    if r.returncode != 0:
+        raise AssertionError(
+            f"web failed for {fixture} (rc={r.returncode}): "
+            f"{_redact(r.stderr, secrets)}")
+    return r.stdout
 
 
 def has_pwsh():
     return bool(shutil.which("pwsh"))
 
 
-# Hard timeout so a misaligned answer queue can never hang CI; on timeout
-# the captured output is included with secrets redacted.
-GEN_TIMEOUT = 15
-SECRETS = [a for a in ANSWERS if a.startswith(("AIza", "sk-"))]
+class TestThreeWayEquivalence(unittest.TestCase):
 
+    def test_all_generators_match_oracle_for_all_cases(self):
+        tmp = Path(tempfile.mkdtemp(prefix="gen3way-"))
+        for case in CASES:
+            expected = oracle(case)
+            bash = run_bash(case, tmp / f"bash-{case}.yml")
+            self.assertEqual(bash, expected, f"Bash != oracle for {case}")
+            web = run_web(case)
+            self.assertEqual(web, expected, f"Web != oracle for {case}")
 
-def _redact(text):
-    for s in SECRETS:
-        if s:
-            text = text.replace(s, "***REDACTED***")
-    return text
+    @unittest.skipUnless(has_pwsh(), "pwsh not available on this host (CI runs it)")
+    def test_powershell_matches_oracle_for_all_cases(self):
+        tmp = Path(tempfile.mkdtemp(prefix="gen3way-ps-"))
+        for case in CASES:
+            expected = oracle(case)
+            ps = run_pwsh(case, tmp / f"ps-{case}.yml")
+            self.assertEqual(ps, expected, f"PowerShell != oracle for {case}")
 
+    def test_local_publishes_core_loopback_only(self):
+        yml = oracle("local")
+        self.assertIn("127.0.0.1:8765:8765", yml)
 
-def run_bash(out_path):
-    inp = "\n".join(ANSWERS) + "\n"
-    try:
-        return subprocess.run(
-            ["bash", str(SH_GENERATOR), "--output", str(out_path)],
-            input=inp, capture_output=True, text=True, timeout=GEN_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise AssertionError(
-            f"bash generator timed out after {GEN_TIMEOUT}s (answer queue "
-            f"misaligned?)\nstdout: {_redact((exc.stdout or b'').decode(errors='replace'))}\n"
-            f"stderr: {_redact((exc.stderr or b'').decode(errors='replace'))}") from None
+    def test_core_never_public_in_any_case(self):
+        for case in CASES:
+            yml = oracle(case)
+            self.assertNotIn("0.0.0.0:8765", yml, f"core exposed publicly in {case}")
 
-
-def run_pwsh(out_dir):
-    """Drive the ps1 generator non-interactively through pwsh."""
-    # NOTE: PowerShell variables are case-insensitive, so the queue and the
-    # answer array must not share a name (that collision is what broke CI).
-    answers_literal = ", ".join("'" + a.replace("'", "''") + "'" for a in ANSWERS)
-    script = f"""
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-# Non-interactive input plumbing: override Read-Host for the session.
-# Use $global: scope: the generator script runs in its own script scope,
-# so $script: inside our override would not be visible from there.
-$global:answerQueue = [System.Collections.Generic.Queue[string]]::new()
-foreach ($item in @({answers_literal})) {{ $global:answerQueue.Enqueue($item) }}
-function global:Read-Host {{
-    param([string]$PromptMessage, [switch]$AsSecureString)
-    if ($AsSecureString) {{
-        # secret prompt: return a real SecureString (the generator wraps it
-        # via SecureStringToBSTR itself). ConvertTo-SecureString rejects the
-        # empty string, so build the SecureString char by char — matching
-        # real Read-Host -AsSecureString behavior for empty optional input.
-        $secure = New-Object System.Security.SecureString
-        foreach ($ch in ($global:answerQueue.Dequeue()).ToCharArray()) {{
-            $secure.AppendChar($ch)
-        }}
-        return $secure
-    }}
-    return $global:answerQueue.Dequeue()
-}}
-& '{PS1_GENERATOR}' -OutputPath '{out_dir / 'stack.yml'}'
-exit 0
-"""
-    try:
-        return subprocess.run(
-            ["pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
-            capture_output=True, text=True, timeout=GEN_TIMEOUT,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise AssertionError(
-            f"pwsh generator timed out after {GEN_TIMEOUT}s (answer queue "
-            f"misaligned?)\nstdout: {_redact((exc.stdout or b'').decode(errors='replace'))}\n"
-            f"stderr: {_redact((exc.stderr or b'').decode(errors='replace'))}") from None
-
-
-@unittest.skipUnless(has_pwsh(), "pwsh not available on this host (CI runs it)")
-class TestGeneratorEquivalence(unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        cls.tmp = Path(tempfile.mkdtemp(prefix="gen-equiv-"))
-        rb = run_bash(cls.tmp / "bash-stack.yml")
-        rp = run_pwsh(cls.tmp)
-        if rb.returncode != 0:
-            raise AssertionError(f"bash generator failed: {rb.stderr}")
-        if rp.returncode != 0:
-            raise AssertionError(f"pwsh generator failed: {rp.stdout} {rp.stderr}")
-        import yaml
-        cls.bash = yaml.safe_load((cls.tmp / "bash-stack.yml").read_text())
-        cls.pwsh = yaml.safe_load((cls.tmp / "stack.yml").read_text())
-
-    def test_secret_never_printed_by_either(self):
-        # generators were captured above; assert key is in the YAML env only
-        for doc in (self.bash, self.pwsh):
-            env = doc["services"]["openai-tunnel"]["environment"]
-            self.assertEqual(env["CONTROL_PLANE_API_KEY"], "sk-equivalence-test-key")
-
-    def test_images_identical(self):
-        for svc in ("youtube-mcp", "openai-tunnel"):
-            self.assertEqual(
-                self.bash["services"][svc]["image"],
-                self.pwsh["services"][svc]["image"],
-                f"image mismatch for {svc}",
-            )
-        self.assertEqual(
-            self.bash["services"]["youtube-mcp"]["image"],
-            "ghcr.io/dracoform/chatgpt-youtube-mcp:0.9.9",
-        )
-        self.assertEqual(
-            self.bash["services"]["openai-tunnel"]["image"],
-            "ghcr.io/dracoform/openai-mcp-tunnel:0.9.8",
-        )
-
-    def test_tunnel_environment_identical(self):
-        b = self.bash["services"]["openai-tunnel"]["environment"]
-        p = self.pwsh["services"]["openai-tunnel"]["environment"]
-        self.assertEqual(b, p)
-        self.assertEqual(b["CONTROL_PLANE_TUNNEL_ID"], VALID_ID)
-        self.assertNotIn("OPENAI_TUNNEL_ID", b)
-
-    def test_youtube_mcp_environment_identical(self):
-        self.assertEqual(
-            self.bash["services"]["youtube-mcp"]["environment"],
-            self.pwsh["services"]["youtube-mcp"]["environment"],
-        )
-
-    def test_security_settings_identical(self):
-        for svc in ("youtube-mcp", "openai-tunnel"):
-            b = self.bash["services"][svc]
-            p = self.pwsh["services"][svc]
-            for key in ("read_only", "tmpfs", "cap_drop", "security_opt",
-                        "restart", "networks"):
-                self.assertEqual(b.get(key), p.get(key), f"{svc}.{key}")
-        tun_b = self.bash["services"]["openai-tunnel"]
-        tun_p = self.pwsh["services"]["openai-tunnel"]
-        self.assertEqual(str(tun_b["stop_grace_period"]),
-                         str(tun_p["stop_grace_period"]))
-        self.assertEqual(tun_b["depends_on"], tun_p["depends_on"])
-
-    def test_no_ports_no_volumes_in_either(self):
-        for doc in (self.bash, self.pwsh):
-            self.assertNotIn("ports", doc["services"]["openai-tunnel"])
-            self.assertNotIn("ports", doc["services"]["youtube-mcp"])
-            self.assertNotIn("volumes", doc)
-            self.assertNotIn("volumes", doc["services"]["openai-tunnel"])
-
-    def test_networks_identical(self):
-        self.assertEqual(self.bash["networks"], self.pwsh["networks"])
-
-    def test_proxy_behavior_identical(self):
-        for doc in (self.bash, self.pwsh):
-            env = doc["services"]["openai-tunnel"]["environment"]
-            self.assertEqual(env["HTTPS_PROXY"], "http://proxy:3128")
-            self.assertEqual(env["NO_PROXY"], "youtube-mcp,localhost,127.0.0.1")
-
-    def test_yt_dlp_settings_identical(self):
-        for doc in (self.bash, self.pwsh):
-            env = doc["services"]["youtube-mcp"]["environment"]
-            self.assertEqual(env["YOUTUBE_ENABLE_YTDLP"], "false")
-            self.assertEqual(env["YOUTUBE_DEFAULT_LANGUAGES"], "de,en,fr")
-            self.assertEqual(env["YOUTUBE_TRANSCRIPT_MAX_CHARS"], "120000")
+    def test_oracle_validates_rejected_combinations(self):
+        import sys
+        sys.path.insert(0, str(REPO))
+        from generators.canonical_model import validate
+        # public no-auth edge
+        with self.assertRaises(ValueError):
+            validate({"access": ["static"], "edge": {"auth_modes": []}})
+        # oauth without resource
+        with self.assertRaises(ValueError):
+            validate({"access": ["oauth"],
+                      "edge": {"auth_modes": ["oauth"], "oauth": {"issuer": "x"}}})
+        # half TLS
+        with self.assertRaises(ValueError):
+            validate({"access": ["static"],
+                      "edge": {"auth_modes": ["static"], "tls": "edge",
+                               "cert_file": "/c", "key_file": "",
+                               "static_tokens": ["ytsk_ok"], "oauth": {}}})
+        # static+oauth namespace ambiguity
+        with self.assertRaises(ValueError):
+            validate({"access": ["static", "oauth"],
+                      "edge": {"auth_modes": ["static", "oauth"], "tls": "ingress",
+                               "static_tokens": ["noprefix"],
+                               "oauth": {"issuer": "https://as/r", "resource": "https://m/mcp"}}})
 
 
 if __name__ == "__main__":

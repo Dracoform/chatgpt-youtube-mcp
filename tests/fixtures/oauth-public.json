@@ -1,0 +1,33 @@
+{
+  "mcp": {
+    "tag": "0.9.9",
+    "youtube_api_key": "AIzaSyA1234567890abcdefghijklmnopqrstuv",
+    "enable_ytdlp": true,
+    "languages": "de,en,fr",
+    "max_chars": "120000"
+  },
+  "access": [
+    "oauth"
+  ],
+  "edge": {
+    "enabled": true,
+    "auth_modes": [
+      "oauth"
+    ],
+    "tls": "edge",
+    "public_port": "9443",
+    "cert_file": "/certs/tls.crt",
+    "key_file": "/certs/tls.key",
+    "static_token_prefix": "ytsk_",
+    "static_tokens": [],
+    "oauth": {
+      "issuer": "https://as.example.org/realms/master",
+      "resource": "https://mcp.example.org/mcp",
+      "audience": "account",
+      "required_scope": "youtube-mcp",
+      "jwks_url": "https://as.example.org/realms/master/certs",
+      "authorization_servers": "https://as.example.org/realms/master",
+      "scopes_supported": "youtube-mcp"
+    }
+  }
+}

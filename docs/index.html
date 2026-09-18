@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,186 +15,321 @@
          alt="ChatGPT YouTube MCP">
     <h1>Portainer Stack Generator</h1>
     <p>
-      Creates the Compose YAML for the
-      <a href="https://github.com/Dracoform/chatgpt-youtube-mcp">chatgpt-youtube-mcp</a>
-      stack: the read-only YouTube MCP server plus the OpenAI Secure MCP Tunnel.
+      Erzeugt die Compose-YAML für den
+      <a href="https://github.com/Dracoform/chatgpt-youtube-mcp">chatgpt-youtube-mcp</a>-Stack:
+      den schreibgeschützten YouTube-MCP-Server plus optionalen OpenAI Secure MCP Tunnel
+      und optionalem öffentlichem Edge (statische Tokens / OAuth).
     </p>
   </header>
 
   <section id="privacy" class="callout">
-    <h2>Privacy</h2>
+    <h2>Datenschutz</h2>
     <p>
-      <strong>Everything on this page runs locally in your browser.</strong>
-      The generated YAML and every value you enter exist only in this page's
-      memory while it is open. The application performs <strong>no network
-      requests after loading</strong> — nothing is uploaded, submitted,
-      stored, or logged anywhere. When you are done, use
-      <em>Clear all sensitive data</em> or simply close the tab.
+      <strong>Alles auf dieser Seite läuft lokal im Browser.</strong>
+      Die erzeugte YAML und alle eingegebenen Werte existieren nur im Speicher
+      dieser Seite, solange sie geöffnet ist. Die Anwendung stellt nach dem Laden
+      <strong>keine Netzwerkverbindungen</strong> her — nichts wird hochgeladen,
+      übermittelt, gespeichert oder protokolliert. Zum Schluss
+      <em>Alle sensiblen Daten löschen</em> verwenden oder einfach den Tab schließen.
     </p>
     <p class="note">
-      The operating-system clipboard temporarily contains your secrets after
-      you copy the YAML. Ordinary web JavaScript cannot securely erase
-      physical memory or reliably clear every platform clipboard — paste into
-      Portainer and clear your clipboard promptly.
+      Die Betriebssystem-Clipboard enthält nach dem Kopieren der YAML vorübergehend
+      Ihre Geheimnisse. Web-JavaScript kann physischen Speicher nicht sicher leeren
+      und das Clipboard aller Plattformen nicht zuverlässig räumen — in Portainer
+      einfügen und das Clipboard zeitnah leeren.
     </p>
   </section>
 
   <nav class="links">
-    <h2>Guides</h2>
+    <h2>Anleitungen</h2>
     <ul>
-      <li><a href="YOUTUBE_API_KEY.md">How to obtain a YouTube Data API key</a></li>
+      <li><a href="YOUTUBE_API_KEY.md">YouTube Data API key beschaffen</a></li>
       <li><a href="OPENAI_SECURE_MCP_TUNNEL.md">OpenAI Secure MCP Tunnel deployment</a></li>
-      <li><a href="PORTAINER_STACK_GENERATORS.md">All generator variants (web, Bash, PowerShell)</a></li>
+      <li><a href="MULTI_CLIENT_DEPLOYMENT_GUIDE.md">Multi-Client Deployment Guide (Zugriffsarten + Clients)</a></li>
+      <li><a href="PORTAINER_STACK_GENERATORS.md">Alle Generator-Varianten (Web, Bash, PowerShell)</a></li>
     </ul>
   </nav>
 
   <main>
     <form id="generator-form" autocomplete="off" novalidate>
-      <!-- NOTE: the form has no action and JS blocks submission; values never leave the page. -->
+      <!-- NOTE: das Formular hat kein action und JS blockiert die Absendung; Werte verlassen die Seite nie. -->
 
       <fieldset>
-        <legend>Container images</legend>
+        <legend>Zugriffsmethoden (Fähigkeiten)</legend>
+        <p class="hint">Mindestens eine Methode wählen. Die nachfolgenden Abschnitte
+          erscheinen je nach Auswahl.</p>
 
-        <div class="field">
-          <label for="mcp_tag"><span class="tag optional">[OPTIONAL]</span> YouTube-MCP image tag</label>
-          <input id="mcp_tag" name="mcp_tag" type="text" value="latest"
-                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-          <p class="hint">Example: <code>latest</code>. Image:
-            <code>ghcr.io/dracoform/chatgpt-youtube-mcp</code>.</p>
+        <div class="field choice" id="access_local_field">
+          <label><input type="checkbox" name="access" id="access_local"> Lokaler Zugriff</label>
+          <p class="hint">Der Kern veröffentlicht einen Loopback-Port
+            (<code>127.0.0.1:8765</code>) für Clients auf dem Host.</p>
         </div>
 
-        <div class="field">
-          <label for="tunnel_tag"><span class="tag optional">[OPTIONAL]</span> Tunnel image tag</label>
-          <input id="tunnel_tag" name="tunnel_tag" type="text" value="0.1.0"
-                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-          <p class="hint">Example: <code>0.1.0</code>. Image:
-            <code>ghcr.io/dracoform/openai-mcp-tunnel</code>.</p>
+        <div class="field choice" id="access_tunnel_field">
+          <label><input type="checkbox" name="access" id="access_tunnel"> OpenAI Secure MCP Tunnel</label>
+          <p class="hint">Verbindet den Server über einen OpenAI-Tunnel mit ChatGPT.</p>
+        </div>
+
+        <div class="field choice" id="access_static_field">
+          <label><input type="checkbox" name="access" id="access_static"> Öffentlicher Edge — statische Tokens</label>
+          <p class="hint">Öffentliche Clients authentisieren sich mit festen Tokens.</p>
+        </div>
+
+        <div class="field choice" id="access_oauth_field">
+          <label><input type="checkbox" name="access" id="access_oauth"> Öffentlicher Edge — OAuth</label>
+          <p class="hint">Öffentliche Clients authentisieren sich mit OAuth-Tokens (Issuer/Resource erforderlich).</p>
         </div>
       </fieldset>
 
       <fieldset>
-        <legend>YouTube data source</legend>
+        <legend>YouTube-MCP-Kern</legend>
+
+        <div class="field">
+          <label for="mcp_tag"><span class="tag mandatory">[PFLICHT]</span> YouTube-MCP-Image-Tag</label>
+          <input id="mcp_tag" name="mcp_tag" type="text" value="latest"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <p class="hint">Beispiel: <code>latest</code>. Image:
+            <code>ghcr.io/dracoform/chatgpt-youtube-mcp</code>.</p>
+        </div>
 
         <div class="field">
           <label for="youtube_api_key"><span class="tag optional">[OPTIONAL]</span> YouTube Data API key</label>
           <div class="secret-row">
             <input id="youtube_api_key" name="youtube_api_key" type="password"
                    autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-            <button type="button" id="yt-show" class="toggle" aria-pressed="false">Show</button>
+            <button type="button" id="yt-show" class="toggle" aria-pressed="false">Zeigen</button>
           </div>
-          <p class="hint">Example: <code>AIza...</code>. Leave empty to run without
-            official Data API calls (yt-dlp fallback only).
-            <a href="YOUTUBE_API_KEY.md">How to obtain a key</a>.</p>
+          <p class="hint">Beispiel: <code>AIza...</code>. Leer lassen, um ohne offizielle
+            Data-API-Aufrufe zu laufen (nur yt-dlp-Fallback).
+            <a href="YOUTUBE_API_KEY.md">Key beschaffen</a>.</p>
           <div id="yt-review" class="review hidden" aria-live="polite">
-            <p>Received YouTube API key:</p>
+            <p>Empfänger YouTube API key:</p>
             <pre id="yt-mask" class="mask"></pre>
-            <p>Length: <span id="yt-length"></span> characters</p>
+            <p>Länge: <span id="yt-length"></span> Zeichen</p>
           </div>
         </div>
 
         <div class="field">
-          <span class="tag optional">[OPTIONAL]</span> <span class="label-text">Enable unofficial yt-dlp transcript retrieval?</span>
+          <span class="tag optional">[OPTIONAL]</span> <span class="label-text">Inoffizielle yt-dlp-Transkripte aktivieren?</span>
           <div class="choice">
-            <label><input type="radio" name="enable_ytdlp" value="true" checked> Yes</label>
-            <label><input type="radio" name="enable_ytdlp" value="false"> No</label>
+            <label><input type="radio" name="enable_ytdlp" id="enable_ytdlp_true" value="true" checked> Ja</label>
+            <label><input type="radio" name="enable_ytdlp" id="enable_ytdlp_false" value="false"> Nein</label>
           </div>
-          <p class="hint">Default: yes. Uses unofficial YouTube endpoints that can
-            be rate-limited or changed by YouTube.</p>
+          <p class="hint">Standard: ja. Nutzt inoffizielle YouTube-Endpunkte, die
+            rate-limitiert oder von YouTube geändert werden können.</p>
         </div>
 
         <div class="field hidden" id="consent-field">
-          <label for="ytdlp_consent"><span class="tag conditional">[CONDITIONAL]</span> yt-dlp consent — type <code>JA</code> to confirm</label>
+          <label for="ytdlp_consent"><span class="tag conditional">[BEDINGT]</span> yt-dlp-Zustimmung — <code>JA</code> eingeben</label>
           <input id="ytdlp_consent" name="ytdlp_consent" type="text"
                  autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false">
-          <p class="hint">Required only because yt-dlp is enabled. Example: <code>JA</code>.</p>
+          <p class="hint">Nötig, weil yt-dlp aktiviert ist. Beispiel: <code>JA</code>.</p>
         </div>
 
         <div class="field">
-          <label for="languages"><span class="tag optional">[OPTIONAL]</span> Preferred transcript languages (comma-separated)</label>
+          <label for="languages"><span class="tag optional">[OPTIONAL]</span> Bevorzugte Transkript-Sprachen (kommagetrennt)</label>
           <input id="languages" name="languages" type="text" value="de,en"
                  autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-          <p class="hint">Default: <code>de,en</code>. Example: <code>de,en,fr</code>.</p>
+          <p class="hint">Standard: <code>de,en</code>. Beispiel: <code>de,en,fr</code>.</p>
         </div>
 
         <div class="field">
-          <label for="max_chars"><span class="tag optional">[OPTIONAL]</span> Maximum transcript characters</label>
+          <label for="max_chars"><span class="tag optional">[OPTIONAL]</span> Maximale Transkript-Zeichen</label>
           <input id="max_chars" name="max_chars" type="text" inputmode="numeric" value="60000"
                  autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-          <p class="hint">Default: <code>60000</code>. Allowed range: 1000–500000. Example: <code>100000</code>.</p>
+          <p class="hint">Standard: <code>60000</code>. Erlaubter Bereich: 1000–500000. Beispiel: <code>100000</code>.</p>
         </div>
       </fieldset>
 
-      <fieldset>
+      <fieldset id="tunnel-section" class="hidden">
         <legend>OpenAI Secure MCP Tunnel</legend>
 
         <div class="field">
-          <label for="tunnel_id"><span class="tag mandatory">[MANDATORY]</span> OpenAI Tunnel ID (visible — not a secret)</label>
-          <input id="tunnel_id" name="tunnel_id" type="text" placeholder="tunnel_..."
+          <label for="tunnel_tag"><span class="tag mandatory">[PFLICHT]</span> Tunnel-Image-Tag</label>
+          <input id="tunnel_tag" name="tunnel_tag" type="text" value="0.1.0"
                  autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-          <p class="hint">Example: <code>tunnel_0123456789abcdef</code>. From
-            <a href="https://platform.openai.com/settings/organization/tunnels">OpenAI tunnel settings</a>.</p>
+          <p class="hint">Beispiel: <code>0.1.0</code>. Image:
+            <code>ghcr.io/dracoform/openai-mcp-tunnel</code>.</p>
         </div>
 
         <div class="field">
-          <label for="runtime_api_key"><span class="tag mandatory">[MANDATORY]</span> OpenAI Runtime API key</label>
+          <label for="tunnel_id"><span class="tag mandatory">[PFLICHT]</span> OpenAI Tunnel ID (sichtbar — kein Geheimnis)</label>
+          <input id="tunnel_id" name="tunnel_id" type="text" placeholder="tunnel_..."
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <p class="hint">Beispiel: <code>tunnel_0123456789abcdef</code>. Aus den
+            <a href="https://platform.openai.com/settings/organization/tunnels">OpenAI-Tunnel-Einstellungen</a>.</p>
+        </div>
+
+        <div class="field">
+          <label for="runtime_api_key"><span class="tag mandatory">[PFLICHT]</span> OpenAI Runtime API key</label>
           <div class="secret-row">
             <input id="runtime_api_key" name="runtime_api_key" type="password"
                    autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-            <button type="button" id="rt-show" class="toggle" aria-pressed="false">Show</button>
+            <button type="button" id="rt-show" class="toggle" aria-pressed="false">Zeigen</button>
           </div>
-          <p class="hint">Example: <code>sk-...</code>. From
-            <a href="https://platform.openai.com/settings/organization/api-keys">Runtime API keys</a>
-            (the tunnel needs Tunnels Read + Use permission).</p>
+          <p class="hint">Beispiel: <code>sk-...</code>. Aus den
+            <a href="https://platform.openai.com/settings/organization/api-keys">Runtime-API-Keys</a>
+            (der Tunnel benötigt Tunnels Read + Use).</p>
           <div id="rt-review" class="review hidden" aria-live="polite">
-            <p>Received OpenAI Runtime API key:</p>
+            <p>Empfänger OpenAI Runtime API key:</p>
             <pre id="rt-mask" class="mask"></pre>
-            <p>Length: <span id="rt-length"></span> characters</p>
+            <p>Länge: <span id="rt-length"></span> Zeichen</p>
           </div>
         </div>
 
         <div class="field">
-          <label for="http_proxy"><span class="tag optional">[OPTIONAL]</span> Outbound proxy for the tunnel (HTTPS_PROXY)</label>
+          <label for="http_proxy"><span class="tag optional">[OPTIONAL]</span> Ausgangs-Proxy für den Tunnel (HTTPS_PROXY)</label>
           <input id="http_proxy" name="http_proxy" type="text" placeholder="http://proxy:3128"
                  autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-          <p class="hint">Example: <code>http://proxy:3128</code>. Only if your network
-            requires an outbound proxy. Sets <code>NO_PROXY=youtube-mcp,localhost,127.0.0.1</code>.</p>
+          <p class="hint">Beispiel: <code>http://proxy:3128</code>. Nur, wenn das Netzwerk
+            einen Ausgangs-Proxy erfordert. Setzt <code>NO_PROXY=youtube-mcp,localhost,127.0.0.1</code>.</p>
+        </div>
+      </fieldset>
+
+      <fieldset id="edge-section" class="hidden">
+        <legend>Öffentlicher Edge (statische Tokens / OAuth)</legend>
+
+        <div class="field">
+          <span class="label-text"><span class="tag mandatory">[PFLICHT]</span> TLS-Modus</span>
+          <div class="choice">
+            <label><input type="radio" name="edge_tls" id="tls_ingress" value="ingress" checked> Ingress (externes TLS)</label>
+            <label><input type="radio" name="edge_tls" id="tls_edge" value="edge"> Edge (Zertifikat + Key hier)</label>
+          </div>
+          <p class="hint">Ingress: TLS wird extern terminiert, das Edge veröffentlicht nur den Loopback-Port.
+            Edge: Das Edge terminiert TLS selbst und benötigt Zertifikat + Key.</p>
+        </div>
+
+        <div class="field hidden" id="tls-cert-fields">
+          <label for="cert_file"><span class="tag mandatory">[PFLICHT]</span> TLS-Zertifikatsdatei (im Container)</label>
+          <input id="cert_file" name="cert_file" type="text" placeholder="/certs/tls.crt"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        </div>
+
+        <div class="field hidden" id="tls-key-fields">
+          <label for="key_file"><span class="tag mandatory">[PFLICHT]</span> TLS-Privatschlüssel (im Container)</label>
+          <input id="key_file" name="key_file" type="text" placeholder="/certs/tls.key"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        </div>
+
+        <div class="field">
+          <label for="public_port"><span class="tag optional">[OPTIONAL]</span> Öffentlicher Port (Loopback-gated)</label>
+          <input id="public_port" name="public_port" type="text" inputmode="numeric" value="8443"
+                 autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <p class="hint">Standard: <code>8443</code>. Veröffentlicht als
+            <code>127.0.0.1:&lt;Port&gt;:8766</code>; der Operator öffnet ihn für die Öffentlichkeit.</p>
+        </div>
+
+        <div id="static-fields" class="hidden">
+          <div class="field">
+            <label for="static_token_prefix"><span class="tag optional">[OPTIONAL]</span> Token-Präfix (reservierter statischer Namensraum)</label>
+            <input id="static_token_prefix" name="static_token_prefix" type="text" value="ytsk_"
+                   autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+            <p class="hint">Standard: <code>ytsk_</code>. Bei statisch + OAuth auf einem Edge müssen alle Tokens dieses Präfix tragen.</p>
+          </div>
+
+          <div class="field">
+            <label for="static_tokens"><span class="tag mandatory">[PFLICHT]</span> Statische Tokens (kommagetrennt)</label>
+            <div class="secret-row">
+              <input id="static_tokens" name="static_tokens" type="password" placeholder="ytsk_..., ytsk_..."
+                     autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+              <button type="button" id="st-show" class="toggle" aria-pressed="false">Zeigen</button>
+            </div>
+            <p class="hint">Mindestens ein Token. Bei statisch + OAuth muss jedes Token mit dem Präfix beginnen.</p>
+            <div id="st-review" class="review hidden" aria-live="polite">
+              <p>Empfänger statische Tokens:</p>
+              <pre id="st-mask" class="mask"></pre>
+              <p>Anzahl: <span id="st-length"></span></p>
+            </div>
+          </div>
+        </div>
+
+        <div id="oauth-fields" class="hidden">
+          <div class="field">
+            <label for="oauth_issuer"><span class="tag mandatory">[PFLICHT]</span> OAuth-Issuer</label>
+            <input id="oauth_issuer" name="oauth_issuer" type="text" placeholder="https://as.example.org/realms/master"
+                   autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          </div>
+
+          <div class="field">
+            <label for="oauth_resource"><span class="tag mandatory">[PFLICHT]</span> OAuth-Resource-Identifier</label>
+            <input id="oauth_resource" name="oauth_resource" type="text" placeholder="https://mcp.example.org/mcp"
+                   autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          </div>
+
+          <div class="field">
+            <label for="oauth_audience"><span class="tag optional">[OPTIONAL]</span> OAuth-Audience</label>
+            <input id="oauth_audience" name="oauth_audience" type="text" placeholder="account"
+                   autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          </div>
+
+          <div class="field">
+            <label for="oauth_required_scope"><span class="tag optional">[OPTIONAL]</span> Erforderlicher Scope</label>
+            <input id="oauth_required_scope" name="oauth_required_scope" type="text" placeholder="youtube-mcp"
+                   autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          </div>
+
+          <div class="field">
+            <label for="oauth_jwks_url"><span class="tag optional">[OPTIONAL]</span> JWKS-URL</label>
+            <input id="oauth_jwks_url" name="oauth_jwks_url" type="text" placeholder="https://as.example.org/realms/master/certs"
+                   autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          </div>
+
+          <div class="field">
+            <label for="oauth_authorization_servers"><span class="tag optional">[OPTIONAL]</span> Authorization-Server</label>
+            <input id="oauth_authorization_servers" name="oauth_authorization_servers" type="text" placeholder="https://as.example.org/realms/master"
+                   autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          </div>
+
+          <div class="field">
+            <label for="oauth_scopes_supported"><span class="tag optional">[OPTIONAL]</span> Unterstützte Scopes</label>
+            <input id="oauth_scopes_supported" name="oauth_scopes_supported" type="text" placeholder="youtube-mcp"
+                   autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          </div>
+
+          <div class="field">
+            <div id="oa-review" class="review hidden" aria-live="polite">
+              <p>Empfänger OAuth-Konfiguration:</p>
+              <pre id="oa-mask" class="mask"></pre>
+              <p>Längen: <span id="oa-length"></span></p>
+            </div>
+          </div>
         </div>
       </fieldset>
 
       <div class="actions">
-        <button type="button" id="btn-generate">Generate YAML</button>
-        <button type="button" id="btn-copy" disabled>Copy YAML to clipboard</button>
-        <button type="button" id="btn-select" disabled>Select all YAML</button>
-        <button type="button" id="btn-clear" class="danger">Clear all sensitive data</button>
-        <button type="button" id="btn-restart" class="danger">Start over</button>
+        <button type="button" id="btn-generate">YAML erzeugen</button>
+        <button type="button" id="btn-copy" disabled>YAML in die Zwischenablage kopieren</button>
+        <button type="button" id="btn-select" disabled>Gesamte YAML markieren</button>
+        <button type="button" id="btn-clear" class="danger">Alle sensiblen Daten löschen</button>
+        <button type="button" id="btn-restart" class="danger">Neu starten</button>
       </div>
       <p id="form-error" class="error hidden" aria-live="assertive"></p>
     </form>
 
     <section id="output" class="hidden">
-      <h2>Generated stack YAML</h2>
+      <h2>Erzeugte Stack-YAML</h2>
       <p>
-        Copy this YAML and paste it into Portainer:
+        Diese YAML kopieren und in Portainer einfügen:
         <strong>Stacks → Add stack → Web editor</strong>.
-        The file contains secrets — treat it accordingly.
+        Die Datei enthält Geheimnisse — entsprechend behandeln.
       </p>
       <p id="copy-status" class="callout-note hidden" aria-live="polite"></p>
       <textarea id="yaml-output" rows="24" spellcheck="false"
                 autocomplete="off" autocapitalize="off" autocorrect="off"
-                aria-label="Generated Portainer stack YAML"></textarea>
+                aria-label="Erzeugte Portainer-Stack-YAML"></textarea>
       <p class="note">
-        Nothing is downloaded or saved: the YAML exists only in this page.
-        The operating-system clipboard temporarily contains secrets after
-        copying; JavaScript cannot reliably erase it on every platform.
+        Nichts wird heruntergeladen oder gespeichert: Die YAML existiert nur auf dieser Seite.
+        Das Betriebssystem-Clipboard enthält nach dem Kopieren vorübergehend Geheimnisse;
+        JavaScript kann es nicht zuverlässig auf allen Plattformen leeren.
       </p>
     </section>
   </main>
 
   <footer>
     <p>
-      Alternatives: the
-      <a href="PORTAINER_STACK_GENERATORS.md">Bash and PowerShell generators</a>
-      produce the same stack. Project:
+      Alternativen: die
+      <a href="PORTAINER_STACK_GENERATORS.md">Bash- und PowerShell-Generatoren</a>
+      erzeugen denselben Stack. Projekt:
       <a href="https://github.com/Dracoform/chatgpt-youtube-mcp">github.com/Dracoform/chatgpt-youtube-mcp</a>.
     </p>
   </footer>

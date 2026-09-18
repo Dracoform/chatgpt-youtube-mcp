@@ -1,0 +1,44 @@
+{
+  "mcp": {
+    "tag": "latest",
+    "youtube_api_key": "",
+    "enable_ytdlp": false,
+    "languages": "de,en",
+    "max_chars": "60000"
+  },
+  "access": [
+    "tunnel",
+    "static",
+    "oauth"
+  ],
+  "tunnel": {
+    "tag": "0.9.8",
+    "tunnel_id": "tunnel_0123456789abcdef0123456789abcdef",
+    "runtime_api_key": "sk-equivalence-test-key",
+    "http_proxy": ""
+  },
+  "edge": {
+    "enabled": true,
+    "auth_modes": [
+      "static",
+      "oauth"
+    ],
+    "tls": "ingress",
+    "public_port": "8443",
+    "cert_file": "",
+    "key_file": "",
+    "static_token_prefix": "ytsk_",
+    "static_tokens": [
+      "ytsk_t"
+    ],
+    "oauth": {
+      "issuer": "https://as.example.org/realms/master",
+      "resource": "https://mcp.example.org/mcp",
+      "audience": "account",
+      "required_scope": "",
+      "jwks_url": "",
+      "authorization_servers": "",
+      "scopes_supported": ""
+    }
+  }
+}

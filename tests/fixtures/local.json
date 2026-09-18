@@ -1,0 +1,31 @@
+{
+  "mcp": {
+    "tag": "latest",
+    "youtube_api_key": "",
+    "enable_ytdlp": false,
+    "languages": "de,en",
+    "max_chars": "60000"
+  },
+  "access": [
+    "local"
+  ],
+  "edge": {
+    "enabled": false,
+    "auth_modes": [],
+    "tls": "ingress",
+    "public_port": "8443",
+    "cert_file": "",
+    "key_file": "",
+    "static_token_prefix": "ytsk_",
+    "static_tokens": [],
+    "oauth": {
+      "issuer": "",
+      "resource": "",
+      "audience": "",
+      "required_scope": "",
+      "jwks_url": "",
+      "authorization_servers": "",
+      "scopes_supported": ""
+    }
+  }
+}

@@ -417,54 +417,58 @@ class CoreTests(unittest.TestCase):
     def test_bash_generator_writes_private_stack_without_echoing_secrets(self):
         script = Path(__file__).parents[1] / "generators" / "generate_docker-compose_for_ChatGPT_MCP.sh"
         script.read_bytes().decode("ascii")
-        # new prompt flow: tags, youtube key, key confirm, ytdlp(no),
-        # languages, max chars, tunnel id, runtime key, key confirm, proxy
-        answers = "\n".join([
-            "", "", "", "y", "n", "", "",
-            "tunnel_0123456789abcdef0123456789abcdef",
-            "sk-runtime-secret-value", "y", "",   # sk- prefix avoids the warning
-        ])
+        # Drive the generator non-interactively via --input and the canonical
+        # fixture (tunnel-only). It must produce a valid tunnel stack without
+        # echoing secrets and with restrictive file permissions.
+        fixture = Path(__file__).parents[1] / "tests" / "fixtures" / "tunnel-only.json"
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "stack.yml"
             completed = subprocess.run(
-                ["bash", str(script), "--output", str(output)],
-                input=answers,
+                ["bash", str(script), "--input", str(fixture), "--output", str(output)],
                 text=True,
                 capture_output=True,
                 check=True,
             )
             generated = output.read_text()
             self.assertIn("ghcr.io/dracoform/chatgpt-youtube-mcp:latest", generated)
-            self.assertIn("ghcr.io/dracoform/openai-mcp-tunnel:0.1.0", generated)
+            self.assertIn("ghcr.io/dracoform/openai-mcp-tunnel:0.9.8", generated)
             self.assertIn("CONTROL_PLANE_TUNNEL_ID: 'tunnel_0123456789abcdef0123456789abcdef'", generated)
-            self.assertIn("CONTROL_PLANE_API_KEY: 'sk-runtime-secret-value'", generated)
-            self.assertNotIn("sk-runtime-secret-value", completed.stdout + completed.stderr)
-            messages = completed.stdout + completed.stderr
-            self.assertIn("[MANDATORY]", messages)
-            self.assertIn("[OPTIONAL]", messages)
-            self.assertIn("[CONDITIONAL]", messages)
+            self.assertNotIn("sk-", completed.stdout + completed.stderr)
             script_text = script.read_text(encoding="ascii")
-            self.assertIn("[CONDITIONAL - MANDATORY]", script_text)
+            self.assertIn("access", script_text)
             self.assertNotIn("OPENAI_TUNNEL_ID", generated)
             self.assertNotIn("tunnel-config", generated)
             self.assertNotIn("ports:", generated)
             self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
 
     def test_powershell_generator_contains_same_stack_contract(self):
+        # The ps1 generator DELEGATES rendering to generators/canonical_model.py
+        # (the single source of truth). Check the delegation + wiring here, and the
+        # YAML contract in the canonical model module.
         script = (Path(__file__).parents[1] / "generators" / "generate_docker-compose_for_ChatGPT_MCP.ps1").read_text()
+        for required in (
+            "canonical_model",
+            "-InputPath",
+            "Read-SecretText",
+            "Select-AccessMethods",
+        ):
+            self.assertIn(required, script)
+        for method in ("local", "tunnel", "static", "oauth"):
+            self.assertIn(method, script)
+        self.assertNotIn("OPENAI_TUNNEL_ID", script)
+        self.assertNotIn("tunnel-config", script)
+        self.assertIn("NIE oeffentlich publiziert", script)
+        # YAML contract (env vars, security options) must live in the canonical model.
+        canonical = (Path(__file__).parents[1] / "generators" / "canonical_model.py").read_text(encoding="utf-8")
         for required in (
             "ghcr.io/dracoform/chatgpt-youtube-mcp", "ghcr.io/dracoform/openai-mcp-tunnel",
             "YOUTUBE_API_KEY", "YOUTUBE_ENABLE_YTDLP", "YOUTUBE_DEFAULT_LANGUAGES",
             "CONTROL_PLANE_TUNNEL_ID", "CONTROL_PLANE_API_KEY", "MCP_SERVER_URL",
             "read_only: true", "cap_drop:", "no-new-privileges:true", "stop_grace_period: 30s",
             "NO_PROXY: 'youtube-mcp,localhost,127.0.0.1'",
+            "EDGE_OAUTH_ISSUER", "EDGE_STATIC_TOKENS",
         ):
-            self.assertIn(required, script)
-        self.assertNotIn("OPENAI_TUNNEL_ID", script)
-        self.assertNotIn("tunnel-config", script)
-        self.assertIn("Read-SecretText", script)
-        self.assertIn("[CONDITIONAL - MANDATORY]", script)
-        self.assertIn("[OPTIONAL]", script)
+            self.assertIn(required, canonical)
 
 
 if __name__ == "__main__":
