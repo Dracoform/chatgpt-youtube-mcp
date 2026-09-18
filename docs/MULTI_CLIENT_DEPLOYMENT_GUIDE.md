@@ -77,7 +77,12 @@ insecure stack:
   `./edge-certs:/certs:ro` (read-only); place `tls.crt` (PEM chain) and
   `tls.key` (PEM key, readable by the container uid 65532) in `./edge-certs`.
   The public HTTPS port is published **loopback-gated** by default
-  (`127.0.0.1:<port>:8766`); widen the port mapping only to expose publicly.
+  (`127.0.0.1:<port>:8766`) — a genuinely-public edge is a deliberate opt-in.
+  With the repo's `compose.yaml` (the `edge-public` profile) set
+  `EDGE_PUBLIC_BIND_ADDRESS=0.0.0.0` (or a specific interface) in `.env` to
+  expose it beyond the host; `0.0.0.0` is never the silent default. For a
+  generator-emitted stack, widen the published port mapping in the generated
+  YAML to expose publicly.
 - `tls: ingress` — an external Caddy/nginx/Traefik terminates TLS and forwards
   to the plain-HTTP edge. No cert/key in the stack. (OAuth/Claude clients
   require HTTPS in front of the resource, so an ingress or edge TLS is

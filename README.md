@@ -224,7 +224,7 @@ Where useful, responses expose provenance describing which upstream source produ
 
 ## Deliberate PoC limits
 
-* Google OAuth for personal subscriptions is not included in v0.1. It needs a real per-user authorization broker, not a token pasted into the model.
+* Google OAuth for personal subscriptions is not included in this release. It needs a real per-user authorization broker, not a token pasted into the model.
 * Transcript retrieval for third-party videos is necessarily unofficial. YouTube Data API v3 only permits caption download when the caller can edit the video.
 * A public plugin submission needs a stable public HTTPS deployment. The
   project now provides a supported public HTTPS path (the static-Bearer and

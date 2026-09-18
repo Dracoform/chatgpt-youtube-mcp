@@ -13,6 +13,7 @@ Run with:  uv run python -m unittest tests.test_compose_topology -v
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
@@ -99,9 +100,18 @@ class StageTwoComposeTests(unittest.TestCase):
         self.assertEqual(self.pub["environment"]["EDGE_HOST"], "0.0.0.0")
 
     def test_public_edge_publishes_only_host_loopback(self):
-        # Host publish must be loopback-gated; never a bare public port.
+        # Host publish must default to loopback-gated; a bare public bind must
+        # never be the silent default. The spec carries the configurable bind
+        # placeholder defaulting to 127.0.0.1.
+        self.assertTrue(self.pub["ports"], "public edge must publish a port")
         for spec in self.pub["ports"]:
-            self.assertRegex(spec, r"^127\.0\.0\.1:")
+            # never a silent 0.0.0.0 publish
+            self.assertNotIn("0.0.0.0", spec)
+        self.assertTrue(
+            any(re.search(r"EDGE_PUBLIC_BIND_ADDRESS:-127\.0\.0\.1", p)
+                for p in self.pub["ports"]),
+            self.pub["ports"],
+        )
 
     def test_public_edge_https_port_configurable(self):
         # Port string must carry the configurable public HTTPS port placeholder.

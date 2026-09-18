@@ -81,8 +81,10 @@ Behavior of the public profile:
 - Core stays **private**: `127.0.0.1:8765:8765` (loopback only).
 - The public edge binds `0.0.0.0` inside its container (required for Docker NAT)
   and Compose publishes only **host loopback** `127.0.0.1:<PUBLIC_HTTPS_PORT>`
-  by default. **To expose beyond the host** you must deliberately widen that
-  publish mapping — safe-by-default.
+  by default. **To expose beyond the host** — i.e. make the edge genuinely
+  publicly reachable (its intended role once TLS + static/OAuth auth are
+  configured) — set `EDGE_PUBLIC_BIND_ADDRESS` to `0.0.0.0` (or a specific
+  interface) in `.env`; it is **deliberately not** the silent default.
 - `EDGE_STATIC_TOKENS` defaults to empty and `EDGE_STATIC_AUTH_ENABLED` defaults
   to `true`: if an operator omits the token, the edge **refuses to start**
   (fail closed) — it can never silently fall back to no-auth.
@@ -92,6 +94,7 @@ Behavior of the public profile:
 | Variable | Default | Notes |
 |---|---|---|
 | `EDGE_PUBLIC_HTTPS_PORT` | `8443` | Host-side published HTTPS port |
+| `EDGE_PUBLIC_BIND_ADDRESS` | `127.0.0.1` | Host bind address for the published port. Loopback by default; set `0.0.0.0` (or a specific interface) in `.env` to make the edge publicly reachable. Never the silent default. |
 | `EDGE_PUBLIC_PORT` | `8766` | Container edge HTTPS port |
 | `EDGE_TLS_DIR` | `./edge-certs` | Host dir mounted read-only at `/certs` |
 | `EDGE_TLS_CERT_FILE` | `/certs/tls.crt` | PEM cert chain path (in container) |

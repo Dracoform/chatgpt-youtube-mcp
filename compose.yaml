@@ -90,8 +90,13 @@ services:
       # ./edge-certs/tls.crt and ./edge-certs/tls.key). Mounted read-only.
       - "${EDGE_TLS_DIR:-./edge-certs}:/certs:ro"
     ports:
-      # Configurable public HTTPS host port -> container EDGE_PORT (HTTPS).
-      - "127.0.0.1:${EDGE_PUBLIC_HTTPS_PORT:-8443}:${EDGE_PUBLIC_PORT:-8766}"
+      # Configurable public HTTPS host bind + port -> container EDGE_PORT (HTTPS).
+      # Safe default: bind only host loopback (127.0.0.1) so the port is not
+      # exposed beyond this host. To make the edge genuinely public (the
+      # intended purpose of this profile once TLS + static/OAuth auth are in
+      # place), set EDGE_PUBLIC_BIND_ADDRESS to 0.0.0.0 (or a specific
+      # interface) in .env. 0.0.0.0 is deliberately NOT the silent default.
+      - "${EDGE_PUBLIC_BIND_ADDRESS:-127.0.0.1}:${EDGE_PUBLIC_HTTPS_PORT:-8443}:${EDGE_PUBLIC_PORT:-8766}"
     depends_on:
       youtube-mcp:
         condition: service_healthy

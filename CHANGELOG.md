@@ -11,7 +11,7 @@ container/image tags (see `README.md` "Versioned releases").
 
 - No changes beyond merged feature work.
 
-## [0.2.0] - multi-client public MCP (in development)
+## [0.2.0] - 2026-09-18
 
 A major capability addition: the previously ChatGPT/OpenAI-tunnel-only server
 can now be reached by arbitrary supported MCP clients over a public Remote MCP
@@ -33,8 +33,11 @@ endpoint with composable access methods.
 - **OAuth Resource Server support (Stage 3):** JWT/JWKS validation of
   access tokens against a separate Authorization Server, deterministic
   static-vs-OAuth dispatch, RFC 9728 protected-resource metadata endpoint, and
-  401 `WWW-Authenticate` discovery. Supports Claude / claude.ai Custom
-  Connectors and OAuth-capable LibreChat.
+  401 `WWW-Authenticate` discovery. The resulting 401-challenge/discovery flow
+  is aligned with the OAuth model that Claude / claude.ai Custom Connectors
+  and OAuth-capable LibreChat expect, and their configs were validated against
+  vendor documentation/source; a live hosted claude.ai connector E2E was **not**
+  performed (account/public-endpoint gated).
 - **Composable deployment generators (Stage 4):** a shared canonical input
   model (`generators/canonical_model.py`) drives the Bash, PowerShell, and Web
   generators; outputs are byte-for-byte equivalent across all three for the
@@ -58,6 +61,10 @@ endpoint with composable access methods.
   capability-oriented flow.
 - `docs/PUBLIC_MCP_EDGE_STAGE_1.md` responsibility notes updated to reflect
   that TLS (Stage 2) and OAuth (Stage 3) are now implemented.
+- The `edge-public` profile's published host bind address is now explicitly
+  configurable via `EDGE_PUBLIC_BIND_ADDRESS`, defaulting to loopback
+  (`127.0.0.1`); a genuinely-public edge is a deliberate opt-in
+  (`0.0.0.0` is never the silent default).
 
 ### Backward compatible
 
